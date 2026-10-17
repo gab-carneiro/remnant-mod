@@ -70,6 +70,12 @@ local lastWorldName = nil       -- Nome do world atual (muda em travel)
 local travelCount = 0           -- Quantas vezes detectamos travel
 local lastSessionAddr = nil     -- Endereco do GameSession (muda se recriado)
 
+-- Declarados aqui (antes das funcoes que os resetam). Antes eram 'local'
+-- mais abaixo, entao o reset no travel escrevia em globais e nao funcionava.
+local processedPlayerSpeeds = {} -- PlayerControllers com bandwidth forcado
+local spawnPointsChecked = false
+local scalingChecked = false
+
 ------------------------------------------------------------
 -- UTILIDADES
 ------------------------------------------------------------
@@ -80,13 +86,42 @@ local function Log(msg)
     end
 end
 
+-- Identidade do objeto: endereco + nome completo.
+-- Quando um jogador sai e entra de novo, o novo PlayerController/Pawn/CMC
+-- pode nascer no MESMO endereco do antigo. So o endereco fazia o mod achar
+-- que ja tinha configurado e pular o objeto novo.
+local function SafeFullName(obj)
+    local ok, name = pcall(function() return obj:GetFullName() end)
+    if ok and type(name) == "string" then return name end
+    return ""
+end
+
+local function IsProcessed(tbl, obj)
+    return tbl[obj:GetAddress()] == SafeFullName(obj)
+end
+
+local function MarkProcessed(tbl, obj)
+    tbl[obj:GetAddress()] = SafeFullName(obj)
+end
+
+-- Remove entradas de objetos que nao existem mais
+local function Prune(tbl, objs)
+    local alive = {}
+    for _, obj in ipairs(objs or {}) do
+        if obj:IsValid() then alive[obj:GetAddress()] = true end
+    end
+    for addr in pairs(tbl) do
+        if not alive[addr] then tbl[addr] = nil end
+    end
+end
+
 ------------------------------------------------------------
 -- SMOOTHING: CharacterMovementComponent
 ------------------------------------------------------------
 
 local function ApplySmoothing(cmc)
     local addr = cmc:GetAddress()
-    if processedCMCs[addr] then return end
+    if IsProcessed(processedCMCs, cmc) then return end
 
     local applied = 0
     local total = 0
@@ -107,7 +142,7 @@ local function ApplySmoothing(cmc)
     end
 
     if applied > 0 then
-        processedCMCs[addr] = true
+        MarkProcessed(processedCMCs, cmc)
         Log(string.format("Smoothing: %d/%d props em CMC @ 0x%X", applied, total, addr))
     end
 end
@@ -115,9 +150,10 @@ end
 local function ScanMovementComponents()
     local cmcs = FindAllOf("CharacterMovementComponent")
     if not cmcs then return end
+    Prune(processedCMCs, cmcs)
 
     for _, cmc in ipairs(cmcs) do
-        if cmc:IsValid() and not processedCMCs[cmc:GetAddress()] then
+        if cmc:IsValid() and not IsProcessed(processedCMCs, cmc) then
             pcall(ApplySmoothing, cmc)
         end
     end
@@ -129,7 +165,7 @@ end
 
 local function ApplyPlayerPriority(pawn)
     local addr = pawn:GetAddress()
-    if processedPlayers[addr] then return end
+    if IsProcessed(processedPlayers, pawn) then return end
 
     local applied = 0
 
@@ -146,7 +182,7 @@ local function ApplyPlayerPriority(pawn)
     if ok3 then applied = applied + 1 end
 
     if applied > 0 then
-        processedPlayers[addr] = true
+        MarkProcessed(processedPlayers, pawn)
         Log(string.format(
             "Player pawn @ 0x%X: prioridade=%.1f, minFreq=%.0fHz, alwaysRelevant=true",
             addr, PLAYER_NET_PRIORITY, MIN_NET_UPDATE_FREQ
@@ -162,7 +198,7 @@ local function ScanPlayerPawns()
         if pc:IsValid() then
             local ok, pawn = pcall(function() return pc.Pawn end)
             if ok and pawn and pawn:IsValid() then
-                if not processedPlayers[pawn:GetAddress()] then
+                if not IsProcessed(processedPlayers, pawn) then
                     pcall(ApplyPlayerPriority, pawn)
                 end
             end
@@ -389,16 +425,15 @@ end
 -- Isso causa throttling severo e acumulo de pacotes reliable.
 -- Forcamos bandwidth alto em todos os players conectados.
 
-local processedPlayerSpeeds = {}
-
 local function ForceClientBandwidth()
     local controllers = FindAllOf("PlayerController")
     if not controllers then return end
+    Prune(processedPlayerSpeeds, controllers)
 
     for _, pc in ipairs(controllers) do
         if pc:IsValid() then
             local addr = pc:GetAddress()
-            if not processedPlayerSpeeds[addr] then
+            if not IsProcessed(processedPlayerSpeeds, pc) then
                 local fixed = false
                 -- Tenta setar via Player object
                 pcall(function()
@@ -414,7 +449,7 @@ local function ForceClientBandwidth()
                     pc:ConsoleCommand("net.ConfiguredInternetSpeed 200000", false)
                 end)
                 if fixed then
-                    processedPlayerSpeeds[addr] = true
+                    MarkProcessed(processedPlayerSpeeds, pc)
                     Log(string.format("Client bandwidth forcado @ 0x%X: 200000", addr))
                 end
             end
@@ -484,8 +519,6 @@ end
 -- pode pegar nullptr. Monitoramos e logamos para diagnostico.
 -- Re-verificado apos cada zone travel.
 
-local spawnPointsChecked = false
-
 local function EnsureSpawnPoints()
     if spawnPointsChecked then return end
 
@@ -525,8 +558,6 @@ end
 -- inimigos. O PAK mod adiciona rows 5 e 6, mas se o PAK nao carregou
 -- a DataTable (ex: cliente sem mod), o FindRow("5") retorna nullptr -> crash.
 -- Re-verificado apos cada zone travel (novo GameState = nova DataTable ref).
-
-local scalingChecked = false
 
 local function CheckScalingSafety()
     if scalingChecked then return end

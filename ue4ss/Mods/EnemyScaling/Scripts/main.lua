@@ -31,13 +31,27 @@ local LOG_ENABLED = true
 -- ESTADO INTERNO
 ------------------------------------------------------------
 
+-- Numero de jogadores em uso no scaling (so muda depois de estabilizar)
 local currentPlayers = 0
 
--- Enderecos de inimigos ja escalados (weak values para GC)
+-- Debounce: durante join/leave/travel o PlayerArray oscila.
+-- So aceitamos um novo valor se ele se repetir em scans seguidos.
+local pendingPlayers = -1
+local pendingScans = 0
+local STABLE_SCANS = 2
+
+-- Inimigos ja escalados, por endereco:
+--   { name = full name do ator, mult = multiplicador aplicado nele }
+-- Guardar o multiplicador aplicado permite re-escalar de forma RELATIVA
+-- quando alguem sai/entra (antes o mod limpava a tabela, multiplicava de
+-- novo em cima do valor ja escalado e curava o mob 100%).
 local scaledActors = {}
 
 -- Classe de inimigos descoberta (cache)
 local enemyClassName = nil
+
+-- Cache dos pawns de jogadores (atualizado a cada scan, usado no hook de dano)
+local playerPawnCache = {}
 
 -- Nomes de classes para tentar (GunfireRuntime / Remnant / generico)
 local CHARACTER_CLASSES = {
@@ -55,8 +69,12 @@ local HEALTH_PROPS = {
     { "HealthMax",    "HealthCurrent" },
 }
 
--- Propriedade de vida descoberta (cache)
-local healthPropIdx = nil
+-- Componentes onde a vida pode estar
+local HEALTH_COMPONENTS = {
+    "DamageableComponent",
+    "StatsComponent",
+    "HealthComponent",
+}
 
 ------------------------------------------------------------
 -- UTILIDADES
@@ -80,26 +98,50 @@ local function DamageMultiplier()
     return 1.0 + ExtraPlayers() * DAMAGE_PER_EXTRA
 end
 
+-- Nome completo do objeto (detecta reuso de endereco por outro ator)
+local function SafeFullName(obj)
+    local ok, name = pcall(function() return obj:GetFullName() end)
+    if ok and type(name) == "string" then return name end
+    return ""
+end
+
 ------------------------------------------------------------
 -- PLAYER COUNT
 ------------------------------------------------------------
 
 local function UpdatePlayerCount()
-    local state = FindFirstOf("GameStateBase")
-    if not state:IsValid() then return end
+    local ok, state = pcall(FindFirstOf, "GameStateBase")
+    if not ok or not state or not state:IsValid() then return end
 
-    local count = state.PlayerArray:GetArrayNum()
-    if count ~= currentPlayers then
+    local ok2, count = pcall(function() return state.PlayerArray:GetArrayNum() end)
+    if not ok2 or type(count) ~= "number" or count <= 0 then
+        -- Loading/travel: PlayerArray vazio. Mantem o valor atual.
+        pendingScans = 0
+        return
+    end
+
+    if count == currentPlayers then
+        pendingScans = 0
+        return
+    end
+
+    if count ~= pendingPlayers then
+        pendingPlayers = count
+        pendingScans = 1
+    else
+        pendingScans = pendingScans + 1
+    end
+
+    if pendingScans >= STABLE_SCANS then
         local old = currentPlayers
         currentPlayers = count
+        pendingScans = 0
         Log(string.format(
             "Jogadores: %d -> %d | HP x%.2f | Dano x%.2f",
             old, count, HealthMultiplier(), DamageMultiplier()
         ))
-
-        -- Reset scaling quando player count muda,
-        -- para re-escalar inimigos existentes no proximo scan
-        scaledActors = {}
+        -- NAO limpa scaledActors: o loop re-escala os inimigos existentes
+        -- de forma relativa ao multiplicador que ja foi aplicado neles.
     end
 end
 
@@ -107,21 +149,34 @@ end
 -- IDENTIFICACAO DE INIMIGOS
 ------------------------------------------------------------
 
--- Retorna uma tabela com os enderecos dos pawns de jogadores
-local function GetPlayerPawns()
-    local pawns = {}
-    local controllers = FindAllOf("PlayerController")
-    if not controllers then return pawns end
+-- Retorna (pawns, controllers): enderecos dos pawns e PlayerControllers
+local function GetPlayers()
+    local pawns, pcs = {}, {}
+    local ok, controllers = pcall(FindAllOf, "PlayerController")
+    if not ok or not controllers then return pawns, pcs end
 
     for _, pc in ipairs(controllers) do
         if pc:IsValid() then
-            local ok, pawn = pcall(function() return pc.Pawn end)
-            if ok and pawn:IsValid() then
+            pcs[pc:GetAddress()] = true
+            local ok2, pawn = pcall(function() return pc.Pawn end)
+            if ok2 and pawn and pawn:IsValid() then
                 pawns[pawn:GetAddress()] = true
             end
         end
     end
-    return pawns
+    return pawns, pcs
+end
+
+-- Inimigo = controlado por um controller que NAO e PlayerController.
+-- Sem controller (ex: pawn de jogador que acabou de entrar/reconectar e
+-- ainda nao foi possuido) -> nao mexe agora, tenta no proximo scan.
+local function IsEnemy(actor, playerPawns, playerControllers)
+    if playerPawns[actor:GetAddress()] then return false end
+
+    local ok, ctrl = pcall(function() return actor.Controller end)
+    if not ok or not ctrl or not ctrl:IsValid() then return false end
+
+    return not playerControllers[ctrl:GetAddress()]
 end
 
 -- Descobre qual classe de personagem existe no jogo
@@ -129,8 +184,8 @@ local function DiscoverEnemyClass()
     if enemyClassName then return enemyClassName end
 
     for _, name in ipairs(CHARACTER_CLASSES) do
-        local actors = FindAllOf(name)
-        if actors and #actors > 0 then
+        local ok, actors = pcall(FindAllOf, name)
+        if ok and actors and #actors > 0 then
             enemyClassName = name
             Log("Classe de personagens encontrada: " .. name)
             return name
@@ -143,82 +198,54 @@ end
 -- HEALTH SCALING
 ------------------------------------------------------------
 
--- Tenta acessar HP de um ator diretamente
-local function TryDirectHealth(actor, propMax, propCur)
-    local ok, maxHp = pcall(function() return actor[propMax] end)
-    if not ok or type(maxHp) ~= "number" or maxHp <= 0 then
-        return false
-    end
-
-    local mult = HealthMultiplier()
-    local newMax = maxHp * mult
-
-    pcall(function() actor[propMax] = newMax end)
-    pcall(function() actor[propCur] = newMax end)
-
-    Log(string.format("  HP direto: %.0f -> %.0f (x%.2f)", maxHp, newMax, mult))
-    return true
+local function ReadNumber(obj, prop)
+    local ok, val = pcall(function() return obj[prop] end)
+    if ok and type(val) == "number" then return val end
+    return nil
 end
 
--- Tenta acessar HP via um componente (DamageableComponent, StatsComponent, etc.)
-local function TryComponentHealth(actor)
-    local componentNames = {
-        "DamageableComponent",
-        "StatsComponent",
-        "HealthComponent",
-    }
+-- Acha onde fica a vida do ator: retorna (objeto, propMax, propCur, label)
+local function FindHealth(actor)
+    for _, props in ipairs(HEALTH_PROPS) do
+        local maxHp = ReadNumber(actor, props[1])
+        if maxHp and maxHp > 0 then
+            return actor, props[1], props[2], "direto"
+        end
+    end
 
-    for _, compName in ipairs(componentNames) do
+    for _, compName in ipairs(HEALTH_COMPONENTS) do
         local ok, comp = pcall(function() return actor[compName] end)
         if ok and comp and comp:IsValid() then
             for _, props in ipairs(HEALTH_PROPS) do
-                local ok2, maxHp = pcall(function() return comp[props[1]] end)
-                if ok2 and type(maxHp) == "number" and maxHp > 0 then
-                    local mult = HealthMultiplier()
-                    local newMax = maxHp * mult
-
-                    pcall(function() comp[props[1]] = newMax end)
-                    pcall(function() comp[props[2]] = newMax end)
-
-                    Log(string.format(
-                        "  HP via %s: %.0f -> %.0f (x%.2f)",
-                        compName, maxHp, newMax, mult
-                    ))
-                    return true
+                local maxHp = ReadNumber(comp, props[1])
+                if maxHp and maxHp > 0 then
+                    return comp, props[1], props[2], compName
                 end
             end
         end
     end
-    return false
+    return nil
 end
 
--- Escala a vida de um inimigo
-local function ScaleEnemyHealth(actor)
-    local addr = actor:GetAddress()
-    if scaledActors[addr] then return end
+-- Multiplica vida max e atual por 'ratio', mantendo a % de vida do mob.
+-- Mob morto (vida atual <= 0) nao e tocado para nao "reviver".
+local function ApplyRatio(actor, ratio)
+    local holder, propMax, propCur, label = FindHealth(actor)
+    if not holder then return false end
 
-    -- Tenta propriedades diretas
-    if not healthPropIdx then
-        for i, props in ipairs(HEALTH_PROPS) do
-            if TryDirectHealth(actor, props[1], props[2]) then
-                healthPropIdx = i
-                scaledActors[addr] = true
-                return
-            end
-        end
-    else
-        local props = HEALTH_PROPS[healthPropIdx]
-        if TryDirectHealth(actor, props[1], props[2]) then
-            scaledActors[addr] = true
-            return
-        end
+    local maxHp = ReadNumber(holder, propMax)
+    local curHp = ReadNumber(holder, propCur)
+    if not maxHp or maxHp <= 0 then return false end
+    if curHp and curHp <= 0 then return true end
+
+    local newMax = maxHp * ratio
+    pcall(function() holder[propMax] = newMax end)
+    if curHp then
+        pcall(function() holder[propCur] = math.min(curHp * ratio, newMax) end)
     end
 
-    -- Tenta via componentes
-    if TryComponentHealth(actor) then
-        scaledActors[addr] = true
-        return
-    end
+    Log(string.format("  HP (%s): %.0f -> %.0f (x%.2f)", label, maxHp, newMax, ratio))
+    return true
 end
 
 ------------------------------------------------------------
@@ -246,17 +273,17 @@ local function TryHookDamage()
                 local mult = DamageMultiplier()
                 if mult <= 1.0 then return end
 
-                -- So escala se o alvo eh um jogador
-                local playerPawns = GetPlayerPawns()
+                -- So escala se o alvo eh um jogador (cache do ultimo scan,
+                -- evita FindAllOf a cada hit)
                 local targetAddr = Context:get():GetAddress()
 
                 -- Se Context eh o componente, pega o owner
                 local ok2, owner = pcall(function() return Context:get():GetOwner() end)
-                if ok2 and owner:IsValid() then
+                if ok2 and owner and owner:IsValid() then
                     targetAddr = owner:GetAddress()
                 end
 
-                if playerPawns[targetAddr] then
+                if playerPawnCache[targetAddr] then
                     -- Multiplica o dano recebido pelo jogador
                     if Damage and Damage.get then
                         local currentDmg = Damage:get()
@@ -291,40 +318,61 @@ Log(string.format(
 -- Tenta hookar funcoes de dano uma vez na inicializacao
 TryHookDamage()
 
--- Scan periodico
-LoopAsync(SCAN_INTERVAL_MS, function()
+local function Scan()
     UpdatePlayerCount()
 
-    -- Nada a fazer se nao tem jogadores extras
-    if ExtraPlayers() <= 0 then
-        return false -- continua o loop
-    end
+    local playerPawns, playerControllers = GetPlayers()
+    playerPawnCache = playerPawns
 
-    -- Tenta hook de dano (caso nao tenha funcionado na init)
-    TryHookDamage()
+    local mult = HealthMultiplier()
 
-    -- Descobre classe de personagem
+    -- Nada escalado e nada a escalar
+    if mult <= 1.0 and next(scaledActors) == nil then return end
+
+    if mult > 1.0 then TryHookDamage() end
+
     local className = DiscoverEnemyClass()
-    if not className then
-        return false -- continua o loop
-    end
+    if not className then return end
 
-    -- Scan de inimigos
-    local playerPawns = GetPlayerPawns()
-    local actors = FindAllOf(className)
-    if not actors then
-        return false
-    end
+    local ok, actors = pcall(FindAllOf, className)
+    if not ok or not actors then actors = {} end
 
+    local seen = {}
     for _, actor in ipairs(actors) do
         if actor:IsValid() then
             local addr = actor:GetAddress()
-            -- Pula se ja escalado ou se eh um jogador
-            if not scaledActors[addr] and not playerPawns[addr] then
-                pcall(ScaleEnemyHealth, actor)
+            local name = SafeFullName(actor)
+            local entry = scaledActors[addr]
+
+            -- Endereco reaproveitado por outro ator: trata como novo
+            if entry and entry.name ~= name then entry = nil end
+
+            if entry then
+                seen[addr] = true
+                if math.abs(entry.mult - mult) > 0.0001 then
+                    -- Player saiu/entrou: ajusta relativo ao que ja foi aplicado
+                    if ApplyRatio(actor, mult / entry.mult) then
+                        entry.mult = mult
+                    end
+                end
+            elseif mult > 1.0 and IsEnemy(actor, playerPawns, playerControllers) then
+                if ApplyRatio(actor, mult) then
+                    scaledActors[addr] = { name = name, mult = mult }
+                    seen[addr] = true
+                end
             end
         end
     end
 
+    -- Remove atores que nao existem mais (morreram / travel)
+    for addr in pairs(scaledActors) do
+        if not seen[addr] then scaledActors[addr] = nil end
+    end
+end
+
+-- Scan periodico
+LoopAsync(SCAN_INTERVAL_MS, function()
+    local ok, err = pcall(Scan)
+    if not ok then Log("Erro no scan: " .. tostring(err)) end
     return false -- continua o loop
 end)
