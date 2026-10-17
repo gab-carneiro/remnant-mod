@@ -14,6 +14,37 @@ Mod que aumenta o limite de jogadores em sessoes co-op do **Remnant: From the As
 
 ---
 
+## Instalacao rapida (recomendado)
+
+1. Baixe `remnant-6players.zip` na pagina de [Releases](../../releases)
+2. Abra a pasta do jogo: Steam > botao direito em Remnant: From the Ashes > **Gerenciar** > **Ver arquivos locais**
+   (normalmente `C:\Program Files (x86)\Steam\steamapps\common\Remnant\`)
+3. Extraia o zip **dentro dessa pasta** e aceite mesclar/substituir. O zip ja vem com a pasta `Remnant\` na estrutura certa:
+   ```
+   Remnant\Content\Paks\~mods\6player.pak
+   Remnant\Binaries\Win64\Mods\NetOptimize\...
+   Remnant\Binaries\Win64\Mods\EnemyScaling\...
+   ```
+4. **So o host:** baixe o [UE4SS v3.0.1](https://github.com/UE4SS-RE/RE-UE4SS/releases/tag/v3.0.1) (`UE4SS_v3.0.1.zip`, nao o "zDEV") e extraia em `Remnant\Remnant\Binaries\Win64\`
+5. Pronto. Quem so entra na sala precisa apenas dos passos 1-3 (na pratica, so do `6player.pak`).
+
+> **Atualizando de uma versao antiga?** Extraia o zip novo por cima. Os scripts `main.lua` do NetOptimize e do EnemyScaling mudaram; o `6player.pak` e o mesmo.
+
+---
+
+## Changelog
+
+### v1.1 — fix de mobs bugando ao sair/entrar na sala
+
+- **EnemyScaling:** quando alguem saia ou entrava, o mod re-multiplicava a vida de todos os inimigos em cima do valor ja escalado e curava eles 100%. Depois de 2 sai/entra com 5 players um mob de 100 HP ficava com ~900 HP, e mobs mortos voltavam com milhares de HP. Agora:
+  - o mod lembra o multiplicador aplicado em cada inimigo e ajusta so a diferenca, mantendo a % de vida atual (sem cura gratis)
+  - inimigos mortos nao sao tocados
+  - a contagem de jogadores so muda depois de ficar estavel por ~6s (durante loading/join ela oscila)
+  - o personagem de um jogador que acabou de reconectar nao e mais confundido com inimigo (antes ganhava HP escalado)
+- **NetOptimize:** jogador que reconectava podia ficar com banda de 10KB/s (mobs teleportando/travando pra ele); o reset de configuracoes ao trocar de zona nao funcionava. Ambos corrigidos.
+
+---
+
 ## Instalacao (passo a passo)
 
 ### 1 — Localizar a pasta do jogo
@@ -115,7 +146,14 @@ Edite os valores no topo de `EnemyScaling/Scripts/main.lua`:
 | `HEALTH_PER_EXTRA` | `0.35` | +35% HP por jogador acima de 3 |
 | `DAMAGE_PER_EXTRA` | `0.15` | +15% dano por jogador acima de 3 |
 
-Com 6 jogadores: HP = 2.05x, Dano = 1.45x.
+| Jogadores | HP dos inimigos | Dano nos jogadores |
+|---|---|---|
+| 1-3 | 1.00x (scaling nativo do jogo) | 1.00x |
+| 4 | 1.35x | 1.15x |
+| 5 | 1.70x | 1.30x |
+| 6 | 2.05x | 1.45x |
+
+Se alguem sai ou entra, os inimigos ja vivos sao ajustados para o novo valor mantendo a % de vida.
 
 ### NetOptimize
 
