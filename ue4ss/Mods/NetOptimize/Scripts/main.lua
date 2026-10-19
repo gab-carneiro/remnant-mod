@@ -3,11 +3,47 @@ local CLIENT_NET_SPEED = 100000
 local SCAN_INTERVAL_MS = 4000
 local LOG_ENABLED = true
 
+local DEFAULT_OBJECT_FLAGS = 0x30
+local TRACKED_CLASSES = {
+    { name = "GameModeBase", path = "/Script/Engine.GameModeBase" },
+    { name = "GameNetworkManager", path = "/Script/Engine.GameNetworkManager" },
+    { name = "NetDriver", path = "/Script/Engine.NetDriver" },
+    { name = "NetConnection", path = "/Script/Engine.NetConnection" },
+}
+
+local tracked = {}
+local seeded = false
 local warned = {}
 
 local function Log(msg)
     if LOG_ENABLED then
         print("[NetOptimize] " .. msg .. "\n")
+    end
+end
+
+local function Track(className, obj)
+    if obj:HasAnyFlags(DEFAULT_OBJECT_FLAGS) then return end
+    tracked[className][obj:GetAddress()] = obj
+end
+
+local function Seed()
+    for _, class in ipairs(TRACKED_CLASSES) do
+        local ok, objects = pcall(FindAllOf, class.name)
+        if ok and objects then
+            for _, obj in ipairs(objects) do
+                if obj:IsValid() then Track(class.name, obj) end
+            end
+        end
+    end
+end
+
+local function ForEachTracked(className, callback)
+    for address, obj in pairs(tracked[className]) do
+        if obj:IsValid() then
+            callback(obj)
+        else
+            tracked[className][address] = nil
+        end
     end
 end
 
@@ -29,50 +65,47 @@ local function Raise(obj, prop, target, label)
     end
 end
 
-local function ForEachValid(className, callback)
-    local ok, objects = pcall(FindAllOf, className)
-    if not ok or not objects then return end
-    for _, obj in ipairs(objects) do
-        if obj:IsValid() then callback(obj) end
-    end
-end
-
-local function IsServer()
-    local found = false
-    ForEachValid("GameModeBase", function() found = true end)
-    return found
-end
-
 local function RaiseLobby()
-    ForEachValid("GameSession", function(session)
-        Raise(session, "MaxPlayers", MAX_PLAYERS, "GameSession")
-    end)
-    ForEachValid("GameModeBase", function(gameMode)
+    local isServer = false
+    ForEachTracked("GameModeBase", function(gameMode)
+        isServer = true
         local ok, session = pcall(function() return gameMode.GameSession end)
         if ok and session and session:IsValid() then
             Raise(session, "MaxPlayers", MAX_PLAYERS, "GameSession")
         end
     end)
+    return isServer
 end
 
 local function RaiseBandwidth()
-    ForEachValid("GameNetworkManager", function(manager)
+    ForEachTracked("GameNetworkManager", function(manager)
         Raise(manager, "TotalNetBandwidth", CLIENT_NET_SPEED * MAX_PLAYERS, "GameNetworkManager")
         Raise(manager, "MaxDynamicBandwidth", CLIENT_NET_SPEED, "GameNetworkManager")
     end)
-    ForEachValid("NetDriver", function(driver)
+    ForEachTracked("NetDriver", function(driver)
         Raise(driver, "MaxClientRate", CLIENT_NET_SPEED, "NetDriver")
         Raise(driver, "MaxInternetClientRate", CLIENT_NET_SPEED, "NetDriver")
     end)
-    ForEachValid("NetConnection", function(connection)
+    ForEachTracked("NetConnection", function(connection)
         Raise(connection, "CurrentNetSpeed", CLIENT_NET_SPEED, "Cliente")
     end)
 end
 
 local function Scan()
-    if not IsServer() then return end
-    RaiseLobby()
-    RaiseBandwidth()
+    if not seeded then
+        seeded = true
+        Seed()
+    end
+    if RaiseLobby() then
+        RaiseBandwidth()
+    end
+end
+
+for _, class in ipairs(TRACKED_CLASSES) do
+    tracked[class.name] = {}
+    NotifyOnNewObject(class.path, function(obj)
+        pcall(Track, class.name, obj)
+    end)
 end
 
 Log("=== NetOptimize carregado ===")

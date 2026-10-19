@@ -1,67 +1,33 @@
-------------------------------------------------------------
--- CONFIGURACAO (edite aqui)
-------------------------------------------------------------
-
 local HEALTH_PER_EXTRA = 0.25
-
--- Numero de jogadores que o jogo ja escala nativamente
 local BASE_PLAYERS = 3
-
--- Intervalo de scan em milissegundos
 local SCAN_INTERVAL_MS = 3000
-
--- Logs no console do UE4SS (desative para menos spam)
 local LOG_ENABLED = true
 
-------------------------------------------------------------
--- ESTADO INTERNO
-------------------------------------------------------------
-
--- Numero de jogadores em uso no scaling (so muda depois de estabilizar)
-local currentPlayers = 0
-
--- Debounce: durante join/leave/travel o PlayerArray oscila.
--- So aceitamos um novo valor se ele se repetir em scans seguidos.
-local pendingPlayers = -1
-local pendingScans = 0
 local STABLE_SCANS = 2
-
--- Inimigos ja escalados, por endereco:
---   { name = full name do ator, mult = multiplicador aplicado nele }
--- Guardar o multiplicador aplicado permite re-escalar de forma RELATIVA
--- quando alguem sai/entra (antes o mod limpava a tabela, multiplicava de
--- novo em cima do valor ja escalado e curava o mob 100%).
-local scaledActors = {}
-
--- Classe de inimigos descoberta (cache)
-local enemyClassName = nil
-
--- Nomes de classes para tentar (GunfireRuntime / Remnant / generico)
-local CHARACTER_CLASSES = {
-    "CharacterGunfire",
-    "RemnantCharacter",
-    "AICharacterGunfire",
-    "Character",
+local DEFAULT_OBJECT_FLAGS = 0x30
+local TRACKED_CLASSES = {
+    { name = "Character", path = "/Script/Engine.Character" },
+    { name = "PlayerController", path = "/Script/Engine.PlayerController" },
+    { name = "GameStateBase", path = "/Script/Engine.GameStateBase" },
 }
-
--- Nomes de propriedades de vida para tentar
 local HEALTH_PROPS = {
-    -- { property_de_max, property_de_current }
-    { "MaxHealth",    "Health" },
+    { "MaxHealth", "Health" },
     { "MaxHitPoints", "HitPoints" },
-    { "HealthMax",    "HealthCurrent" },
+    { "HealthMax", "HealthCurrent" },
 }
-
--- Componentes onde a vida pode estar
 local HEALTH_COMPONENTS = {
     "DamageableComponent",
     "StatsComponent",
     "HealthComponent",
 }
 
-------------------------------------------------------------
--- UTILIDADES
-------------------------------------------------------------
+local currentPlayers = 0
+local pendingPlayers = -1
+local pendingScans = 0
+local scaledActors = {}
+local tracked = {}
+local latestGameState = nil
+local seeded = false
 
 local function Log(msg)
     if LOG_ENABLED then
@@ -69,32 +35,55 @@ local function Log(msg)
     end
 end
 
-local function ExtraPlayers()
-    return math.max(currentPlayers - BASE_PLAYERS, 0)
-end
-
 local function HealthMultiplier()
-    return 1.0 + ExtraPlayers() * HEALTH_PER_EXTRA
+    return 1.0 + math.max(currentPlayers - BASE_PLAYERS, 0) * HEALTH_PER_EXTRA
 end
 
--- Nome completo do objeto (detecta reuso de endereco por outro ator)
-local function SafeFullName(obj)
-    local ok, name = pcall(function() return obj:GetFullName() end)
-    if ok and type(name) == "string" then return name end
-    return ""
+local function Track(className, obj)
+    if obj:HasAnyFlags(DEFAULT_OBJECT_FLAGS) then return end
+    local address = obj:GetAddress()
+    tracked[className][address] = obj
+    if className == "Character" then
+        scaledActors[address] = nil
+    elseif className == "GameStateBase" then
+        latestGameState = obj
+    end
 end
 
-------------------------------------------------------------
--- PLAYER COUNT
-------------------------------------------------------------
+local function Seed()
+    for _, class in ipairs(TRACKED_CLASSES) do
+        local ok, objects = pcall(FindAllOf, class.name)
+        if ok and objects then
+            for _, obj in ipairs(objects) do
+                if obj:IsValid() then Track(class.name, obj) end
+            end
+        end
+    end
+end
+
+local function ForEachTracked(className, callback)
+    for address, obj in pairs(tracked[className]) do
+        if obj:IsValid() then
+            callback(obj, address)
+        else
+            tracked[className][address] = nil
+        end
+    end
+end
+
+local function CurrentGameState()
+    if latestGameState and latestGameState:IsValid() then return latestGameState end
+    latestGameState = nil
+    ForEachTracked("GameStateBase", function(state) latestGameState = state end)
+    return latestGameState
+end
 
 local function UpdatePlayerCount()
-    local ok, state = pcall(FindFirstOf, "GameStateBase")
-    if not ok or not state or not state:IsValid() then return end
+    local state = CurrentGameState()
+    if not state then return end
 
-    local ok2, count = pcall(function() return state.PlayerArray:GetArrayNum() end)
-    if not ok2 or type(count) ~= "number" or count <= 0 then
-        -- Loading/travel: PlayerArray vazio. Mantem o valor atual.
+    local ok, count = pcall(function() return state.PlayerArray:GetArrayNum() end)
+    if not ok or type(count) ~= "number" or count <= 0 then
         pendingScans = 0
         return
     end
@@ -116,71 +105,36 @@ local function UpdatePlayerCount()
         currentPlayers = count
         pendingScans = 0
         Log(string.format("Jogadores: %d -> %d | HP x%.2f", old, count, HealthMultiplier()))
-        -- NAO limpa scaledActors: o loop re-escala os inimigos existentes
-        -- de forma relativa ao multiplicador que ja foi aplicado neles.
     end
 end
 
-------------------------------------------------------------
--- IDENTIFICACAO DE INIMIGOS
-------------------------------------------------------------
-
--- Retorna (pawns, controllers): enderecos dos pawns e PlayerControllers
 local function GetPlayers()
-    local pawns, pcs = {}, {}
-    local ok, controllers = pcall(FindAllOf, "PlayerController")
-    if not ok or not controllers then return pawns, pcs end
-
-    for _, pc in ipairs(controllers) do
-        if pc:IsValid() then
-            pcs[pc:GetAddress()] = true
-            local ok2, pawn = pcall(function() return pc.Pawn end)
-            if ok2 and pawn and pawn:IsValid() then
-                pawns[pawn:GetAddress()] = true
-            end
+    local pawns, controllers = {}, {}
+    ForEachTracked("PlayerController", function(pc, address)
+        controllers[address] = true
+        local ok, pawn = pcall(function() return pc.Pawn end)
+        if ok and pawn and pawn:IsValid() then
+            pawns[pawn:GetAddress()] = true
         end
-    end
-    return pawns, pcs
+    end)
+    return pawns, controllers
 end
 
--- Inimigo = controlado por um controller que NAO e PlayerController.
--- Sem controller (ex: pawn de jogador que acabou de entrar/reconectar e
--- ainda nao foi possuido) -> nao mexe agora, tenta no proximo scan.
 local function IsEnemy(actor, playerPawns, playerControllers)
     if playerPawns[actor:GetAddress()] then return false end
 
-    local ok, ctrl = pcall(function() return actor.Controller end)
-    if not ok or not ctrl or not ctrl:IsValid() then return false end
+    local ok, controller = pcall(function() return actor.Controller end)
+    if not ok or not controller or not controller:IsValid() then return false end
 
-    return not playerControllers[ctrl:GetAddress()]
+    return not playerControllers[controller:GetAddress()]
 end
-
--- Descobre qual classe de personagem existe no jogo
-local function DiscoverEnemyClass()
-    if enemyClassName then return enemyClassName end
-
-    for _, name in ipairs(CHARACTER_CLASSES) do
-        local ok, actors = pcall(FindAllOf, name)
-        if ok and actors and #actors > 0 then
-            enemyClassName = name
-            Log("Classe de personagens encontrada: " .. name)
-            return name
-        end
-    end
-    return nil
-end
-
-------------------------------------------------------------
--- HEALTH SCALING
-------------------------------------------------------------
 
 local function ReadNumber(obj, prop)
-    local ok, val = pcall(function() return obj[prop] end)
-    if ok and type(val) == "number" then return val end
+    local ok, value = pcall(function() return obj[prop] end)
+    if ok and type(value) == "number" then return value end
     return nil
 end
 
--- Acha onde fica a vida do ator: retorna (objeto, propMax, propCur, label)
 local function FindHealth(actor)
     for _, props in ipairs(HEALTH_PROPS) do
         local maxHp = ReadNumber(actor, props[1])
@@ -189,13 +143,13 @@ local function FindHealth(actor)
         end
     end
 
-    for _, compName in ipairs(HEALTH_COMPONENTS) do
-        local ok, comp = pcall(function() return actor[compName] end)
-        if ok and comp and comp:IsValid() then
+    for _, componentName in ipairs(HEALTH_COMPONENTS) do
+        local ok, component = pcall(function() return actor[componentName] end)
+        if ok and component and component:IsValid() then
             for _, props in ipairs(HEALTH_PROPS) do
-                local maxHp = ReadNumber(comp, props[1])
+                local maxHp = ReadNumber(component, props[1])
                 if maxHp and maxHp > 0 then
-                    return comp, props[1], props[2], compName
+                    return component, props[1], props[2], componentName
                 end
             end
         end
@@ -203,8 +157,6 @@ local function FindHealth(actor)
     return nil
 end
 
--- Multiplica vida max e atual por 'ratio', mantendo a % de vida do mob.
--- Mob morto (vida atual <= 0) nao e tocado para nao "reviver".
 local function ApplyRatio(actor, ratio)
     local holder, propMax, propCur, label = FindHealth(actor)
     if not holder then return false end
@@ -224,61 +176,49 @@ local function ApplyRatio(actor, ratio)
     return true
 end
 
-------------------------------------------------------------
--- LOOP PRINCIPAL
-------------------------------------------------------------
-
-Log("=== EnemyScaling carregado ===")
-Log(string.format("Config: +%.0f%% HP por jogador acima de %d", HEALTH_PER_EXTRA * 100, BASE_PLAYERS))
-
 local function Scan()
+    if not seeded then
+        seeded = true
+        Seed()
+    end
+
     UpdatePlayerCount()
 
     local playerPawns, playerControllers = GetPlayers()
-
     local mult = HealthMultiplier()
 
-    -- Nada escalado e nada a escalar
     if mult <= 1.0 and next(scaledActors) == nil then return end
 
-    local className = DiscoverEnemyClass()
-    if not className then return end
-
-    local ok, actors = pcall(FindAllOf, className)
-    if not ok or not actors then actors = {} end
-
     local seen = {}
-    for _, actor in ipairs(actors) do
-        if actor:IsValid() then
-            local addr = actor:GetAddress()
-            local name = SafeFullName(actor)
-            local entry = scaledActors[addr]
-
-            -- Endereco reaproveitado por outro ator: trata como novo
-            if entry and entry.name ~= name then entry = nil end
-
-            if entry then
-                seen[addr] = true
-                if math.abs(entry.mult - mult) > 0.0001 then
-                    -- Player saiu/entrou: ajusta relativo ao que ja foi aplicado
-                    if ApplyRatio(actor, mult / entry.mult) then
-                        entry.mult = mult
-                    end
-                end
-            elseif mult > 1.0 and IsEnemy(actor, playerPawns, playerControllers) then
-                if ApplyRatio(actor, mult) then
-                    scaledActors[addr] = { name = name, mult = mult }
-                    seen[addr] = true
-                end
+    ForEachTracked("Character", function(actor, address)
+        local entry = scaledActors[address]
+        if entry then
+            seen[address] = true
+            if math.abs(entry.mult - mult) > 0.0001 and ApplyRatio(actor, mult / entry.mult) then
+                entry.mult = mult
+            end
+        elseif mult > 1.0 and IsEnemy(actor, playerPawns, playerControllers) then
+            if ApplyRatio(actor, mult) then
+                scaledActors[address] = { mult = mult }
+                seen[address] = true
             end
         end
-    end
+    end)
 
-    -- Remove atores que nao existem mais (morreram / travel)
-    for addr in pairs(scaledActors) do
-        if not seen[addr] then scaledActors[addr] = nil end
+    for address in pairs(scaledActors) do
+        if not seen[address] then scaledActors[address] = nil end
     end
 end
+
+for _, class in ipairs(TRACKED_CLASSES) do
+    tracked[class.name] = {}
+    NotifyOnNewObject(class.path, function(obj)
+        pcall(Track, class.name, obj)
+    end)
+end
+
+Log("=== EnemyScaling carregado ===")
+Log(string.format("Config: +%.0f%% HP por jogador acima de %d", HEALTH_PER_EXTRA * 100, BASE_PLAYERS))
 
 LoopAsync(SCAN_INTERVAL_MS, function()
     ExecuteInGameThread(function()

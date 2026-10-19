@@ -170,6 +170,40 @@ test("EnemyScaling: nao registra hook de dano (o dano escala pela DataTable do P
     equal(#w.hooks, 0, "hooks registrados")
 end)
 
+test("EnemyScaling: inimigo que nasce depois do mod ligar tambem escala", function()
+    local w = enemy_world(4)
+    w:run(ENEMY_SCALING)
+    w:tick(2)
+    local enemy = spawn_enemy(w, 100)
+    w:tick(1)
+    near(prop(enemy, "MaxHealth"), 125, "MaxHealth")
+end)
+
+test("EnemyScaling: depois da primeira passada nao varre mais o array global", function()
+    local w = enemy_world(5)
+    spawn_enemy(w, 100)
+    w:run(ENEMY_SCALING)
+    w:tick(1)
+    w.find_all_calls = 0
+    spawn_enemy(w, 100)
+    w.set_players(4)
+    w:tick(5)
+    equal(w.find_all_calls, 0, "chamadas a FindAllOf/FindFirstOf")
+end)
+
+test("EnemyScaling: inimigo novo no endereco de um morto comeca do zero", function()
+    local w = enemy_world(4)
+    local first = spawn_enemy(w, 100)
+    w:run(ENEMY_SCALING)
+    w:tick(2)
+    near(prop(first, "MaxHealth"), 125, "MaxHealth do primeiro")
+    local address = first:GetAddress()
+    w:destroy(first)
+    local second = w:spawn({ "CharacterGunfire", "Character" }, { MaxHealth = 200, Health = 200, Controller = w.ai }, { address = address })
+    w:tick(1)
+    near(prop(second, "MaxHealth"), 250, "MaxHealth do segundo")
+end)
+
 local function net_world(options)
     options = options or {}
     local w = Mock.world()
@@ -185,7 +219,7 @@ local function net_world(options)
         })
     end
     w.driver = w:spawn({ "SteamNetDriver", "IpNetDriver", "NetDriver" }, {
-        MaxClientRate = options.max_client_rate or 15000,
+        MaxClientRate = options.max_client_rate or 10000,
         MaxInternetClientRate = 10000,
         NetServerMaxTickRate = 30,
         ServerConnection = Mock.null,
@@ -240,7 +274,7 @@ test("NetOptimize: cada cliente conectado recebe 100000 B/s", function()
     end
 end)
 
-test("NetOptimize: o NetDriver do host deixa de limitar a 15000 B/s", function()
+test("NetOptimize: o NetDriver do host deixa de limitar a banda", function()
     local w = net_world()
     w:run(NET_OPTIMIZE)
     w:tick(1)
@@ -282,13 +316,13 @@ test("NetOptimize: no cliente (sem GameMode) nada e alterado", function()
         CurrentNetSpeed = 10000, ConfiguredInternetSpeed = 10000, ConfiguredLanSpeed = 20000,
     })
     local driver = w:spawn({ "SteamNetDriver", "IpNetDriver", "NetDriver" }, {
-        MaxClientRate = 15000, MaxInternetClientRate = 10000, NetServerMaxTickRate = 30,
+        MaxClientRate = 10000, MaxInternetClientRate = 10000, NetServerMaxTickRate = 30,
         ServerConnection = server_connection, ClientConnections = w:array({}),
     })
     local session = w:spawn({ "GameSession" }, { MaxPlayers = 3 })
     w:run(NET_OPTIMIZE)
     w:tick(2)
-    equal(prop(driver, "MaxClientRate"), 15000, "MaxClientRate do cliente")
+    equal(prop(driver, "MaxClientRate"), 10000, "MaxClientRate do cliente")
     equal(prop(server_connection, "CurrentNetSpeed"), 10000, "CurrentNetSpeed do cliente")
     equal(prop(session, "MaxPlayers"), 3, "MaxPlayers no cliente")
 end)
@@ -302,6 +336,45 @@ test("NetOptimize: mexe na engine so dentro da game thread", function()
     w:drain_game_thread()
     equal(prop(w.session, "MaxPlayers"), 6, "MaxPlayers depois da game thread")
     equal(prop(w.connections[1], "CurrentNetSpeed"), 100000, "CurrentNetSpeed depois da game thread")
+end)
+
+test("NetOptimize: depois da primeira passada nao varre mais o array global", function()
+    local w = net_world()
+    w:run(NET_OPTIMIZE)
+    w:tick(1)
+    w.find_all_calls = 0
+    w:spawn({ "SteamNetConnection", "IpConnection", "NetConnection", "Player" }, {
+        CurrentNetSpeed = 10000, ConfiguredInternetSpeed = 10000, ConfiguredLanSpeed = 20000,
+    })
+    w:tick(5)
+    equal(w.find_all_calls, 0, "chamadas a FindAllOf/FindFirstOf")
+end)
+
+test("NetOptimize: sala criada depois do mod ligar tambem e ajustada", function()
+    local w = Mock.world()
+    w:run(NET_OPTIMIZE)
+    w:tick(1)
+    local session = w:spawn({ "GameSession" }, { MaxPlayers = 3 })
+    w:spawn({ "GameModeBase", "GameMode" }, { GameSession = session })
+    local manager = w:spawn({ "GameNetworkManager" }, { TotalNetBandwidth = 32000, MaxDynamicBandwidth = 7000 })
+    local driver = w:spawn({ "SteamNetDriver", "IpNetDriver", "NetDriver" }, {
+        MaxClientRate = 10000, MaxInternetClientRate = 10000, ServerConnection = Mock.null,
+    })
+    local connection = w:spawn({ "SteamNetConnection", "IpConnection", "NetConnection", "Player" }, { CurrentNetSpeed = 10000 })
+    w:tick(1)
+    equal(prop(session, "MaxPlayers"), 6, "MaxPlayers")
+    equal(prop(manager, "MaxDynamicBandwidth"), 100000, "MaxDynamicBandwidth")
+    equal(prop(driver, "MaxClientRate"), 100000, "MaxClientRate")
+    equal(prop(connection, "CurrentNetSpeed"), 100000, "CurrentNetSpeed")
+end)
+
+test("NetOptimize: objeto padrao de classe (CDO) de GameMode nao faz o cliente agir como host", function()
+    local w = Mock.world()
+    w:run(NET_OPTIMIZE)
+    w:spawn({ "GameModeBase", "GameMode" }, { GameSession = Mock.null }, { flags = 0x10 })
+    local connection = w:spawn({ "SteamNetConnection", "NetConnection", "Player" }, { CurrentNetSpeed = 10000 })
+    w:tick(2)
+    equal(prop(connection, "CurrentNetSpeed"), 10000, "CurrentNetSpeed do cliente")
 end)
 
 test("NetOptimize: nao indexa TArray da engine (no UE4SS 3.0.1 isso pode inserir elementos)", function()

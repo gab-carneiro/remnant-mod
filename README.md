@@ -149,11 +149,11 @@ O NetOptimize (so no host) sobe esse limite para **100 KB/s por cliente**, o pad
 
 - **PAK:** desde a conversao para o formato v8 ele nunca tinha carregado. O rodape nao tinha o GUID de criptografia, e o Unreal 4.22 lia lixo no lugar, achava que o PAK era criptografado e adiava a montagem para sempre. Agora monta, e se chama `6player_P.pak` porque no Unreal 4.22 so um PAK terminado em `_P` tem prioridade sobre o PAK do proprio jogo
 - **PAK:** agora so leva a DataTable de escala. O `DefaultGame.ini` saiu: ele substituia o arquivo inteiro do jogo por uma copia antiga, e as secoes de rede estavam no arquivo errado (o jogo le essas configs do `Engine.ini`, entao nunca valeram)
-- **DataTable:** os nomes das linhas "5" e "6" estavam com hash 0, e com isso o jogo nao encontrava essas linhas. Tres offsets do cabecalho tinham ficado 20 bytes atras, o que faria o jogo ler lixo como dependencia ao carregar a tabela. Os dois corrigidos
+- **DataTable:** os nomes das linhas "5" e "6" estavam com hash 0, e com isso o jogo nao encontrava essas linhas. Dois offsets do cabecalho tinham ficado 20 bytes atras, o que faria o jogo ler lixo como dependencia ao carregar a tabela, e o `BulkDataStartOffset` nao acompanhava as linhas novas. Tudo corrigido
 - **Dano:** o hook antigo nunca rodava (`Context:IsValid()` sempre saia da funcao). O dano agora escala pela coluna nativa da tabela
 - **Vida:** +25% por jogador acima de 3 (era +35%), porque com 5 e 6 jogadores agora tambem vem mais inimigos
 - **NetOptimize reescrito:** a banda de 100 KB/s por cliente e aplicada onde o servidor realmente le (o fix da v1.1 gravava um campo que o servidor ignora). Sairam smoothing, prioridade de rede e as 12 CVars, 7 das quais nem existem no Unreal 4.22
-- **NetOptimize e EnemyScaling** rodam na game thread
+- **NetOptimize e EnemyScaling** rodam na game thread e nao varrem mais a lista inteira de objetos do jogo a cada scan: fazem uma passada ao ligar e depois acompanham os objetos novos conforme sao criados, sem travadinha periodica no host
 - **Clientes** nao precisam mais instalar nada
 - Testes automatizados em `tests/`
 
@@ -191,7 +191,9 @@ python build_pak.py --teste    # 6player_TESTE_P.pak (solo com 3x inimigos e 3x 
 python rebuild_scaling.py      # so a DataTable, em modified/, para inspecionar
 ```
 
-Requer Python 3, sem dependencias.
+Requer Python 3, sem dependencias. O PAK e gravado sem compressao, entao sai identico em qualquer maquina.
+
+A release leva dois arquivos: `remnant-6players.zip` (o `6player_P.pak` em `Remnant/Content/Paks/~mods/` e a pasta `ue4ss/Mods` em `Remnant/Binaries/Win64/Mods/`) e o `6player_TESTE_P.pak`.
 
 ### Testes
 

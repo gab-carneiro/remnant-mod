@@ -150,24 +150,44 @@ def mount_pak(data):
     return {"mounted": True, "mount_point": mount_point, "info": info, "files": files}
 
 
+def pak_entry_serialized_size(entry, version):
+    size = 8 + 8 + 8 + 20
+    size += 1 if version >= PAK_VERSION_FNAME_BASED_COMPRESSION else 4
+    if version >= PAK_VERSION_COMPRESSION_ENCRYPTION:
+        size += 1 + 4
+        if entry["compression_method_index"] != 0:
+            size += 16 * len(entry["blocks"]) + 4
+    if version < 2:
+        size += 8
+    return size
+
+
 def read_pak_file(data, mounted, name):
     entry = mounted["files"][name]
     version = mounted["info"]["version"]
-    inline = read_pak_entry(Reader(data, entry["offset"]), version)
+    inline_reader = Reader(data, entry["offset"])
+    inline = read_pak_entry(inline_reader, version)
     for key in ("size", "uncompressed_size", "compression_method_index", "hash", "blocks", "flags", "block_size"):
         if inline[key] != entry[key]:
-            raise PakFatal("cabecalho inline difere do indice em " + key)
+            raise PakFatal("Serialized hash mismatch: cabecalho inline difere do indice em " + key)
     if entry["flags"] & 1:
         raise PakFatal("entrada criptografada")
+    header_size = pak_entry_serialized_size(entry, version)
+    if inline_reader.offset - entry["offset"] != header_size:
+        raise PakFatal("cabecalho inline com tamanho diferente de GetSerializedSize")
+    stored = data[entry["offset"] + header_size:entry["offset"] + header_size + entry["size"]]
+    if hashlib.sha1(stored).digest() != entry["hash"]:
+        raise PakFatal("Hash mismatch: o hash nao e o dos bytes gravados (FPakFile::Check)")
     method = mounted["info"]["compression_methods"][entry["compression_method_index"]]
-    if method != "Zlib":
+    if method is None:
+        payload = stored
+    elif method == "Zlib":
+        base = entry["offset"] if version >= PAK_VERSION_RELATIVE_CHUNK_OFFSETS else 0
+        payload = b"".join(zlib.decompress(data[base + start:base + end]) for start, end in entry["blocks"])
+    else:
         raise PakFatal("metodo de compressao inesperado: " + str(method))
-    base = entry["offset"] if version >= PAK_VERSION_RELATIVE_CHUNK_OFFSETS else 0
-    payload = b"".join(zlib.decompress(data[base + start:base + end]) for start, end in entry["blocks"])
     if len(payload) != entry["uncompressed_size"]:
         raise PakFatal("tamanho descomprimido difere")
-    if hashlib.sha1(payload).digest() != entry["hash"]:
-        raise PakFatal("hash do arquivo difere")
     return payload
 
 

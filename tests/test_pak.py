@@ -48,10 +48,11 @@ class ReleasePakTest(unittest.TestCase):
         mounted = ue422.mount_pak(build_pak.build_release_pak())
         self.assertEqual(sorted(mounted["files"]), sorted(TABLE_FILES))
 
-    def test_pak_blocks_fit_the_engine_chunk_size(self):
+    def test_entries_are_stored_uncompressed_so_any_zlib_builds_the_same_pak(self):
         mounted = ue422.mount_pak(build_pak.build_release_pak())
         for name, entry in mounted["files"].items():
-            self.assertLessEqual(entry["block_size"], 64 * 1024, name)
+            self.assertEqual(entry["compression_method_index"], 0, name)
+            self.assertEqual(entry["block_size"], 0, name)
 
     def test_pak_table_is_the_built_table(self):
         self.assert_pak_has_table(build_pak.build_release_pak(), rebuild_scaling.build_table(*rebuild_scaling.load_original()))

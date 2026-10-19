@@ -248,9 +248,9 @@ def load_original():
 
 def main():
     parser = argparse.ArgumentParser(description="Gera a DataTable de escala por jogadores (linhas 1 a 6) em modified/.")
-    parser.add_argument("--teste", action="store_true", help="tabela de teste: solo com 3x inimigos e 3x dano")
+    parser.add_argument("--teste", dest="test", action="store_true", help="tabela de teste: solo com 3x inimigos e 3x dano")
     args = parser.parse_args()
-    uasset, uexp = build_table(*load_original(), test=args.teste)
+    uasset, uexp = build_table(*load_original(), test=args.test)
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     base = os.path.join(OUTPUT_DIR, TABLE_NAME)
     with open(base + ".uasset", "wb") as out:

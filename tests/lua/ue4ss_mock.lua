@@ -1,11 +1,15 @@
 local Mock = {}
 
+local DEFAULT_OBJECT_FLAGS = 0x30
+
 local next_address = 0x10000
+local next_name = 0
 
 local methods = {
     IsValid = function(self) return rawget(self, "_valid") end,
     GetAddress = function(self) return rawget(self, "_address") end,
     GetFullName = function(self) return rawget(self, "_name") end,
+    HasAnyFlags = function(self, flags) return (rawget(self, "_flags") & flags) ~= 0 end,
     ConsoleCommand = function(self, command)
         local world = rawget(self, "_world")
         world.console[#world.console + 1] = command
@@ -16,10 +20,9 @@ local ObjectMeta = {}
 
 ObjectMeta.__index = function(self, key)
     if methods[key] then return methods[key] end
-    local props = rawget(self, "_props")
-    local value = props[key]
+    local value = rawget(self, "_props")[key]
     if value == nil then
-        error("propriedade inexistente: " .. tostring(key))
+        return Mock.null
     end
     return value
 end
@@ -32,7 +35,7 @@ ObjectMeta.__newindex = function(self, key, value)
     props[key] = value
 end
 
-Mock.null = setmetatable({ _valid = false, _address = 0, _name = "None", _props = {}, _classes = {} }, ObjectMeta)
+Mock.null = setmetatable({ _valid = false, _address = 0, _name = "None", _flags = 0, _props = {}, _classes = {} }, ObjectMeta)
 
 local ArrayMeta = {}
 
@@ -58,16 +61,24 @@ World.__index = World
 
 function Mock.world()
     return setmetatable({
-        objects = {}, loops = {}, game_thread = {}, hooks = {}, logs = {}, console = {}, array_index_reads = 0,
+        objects = {}, loops = {}, game_thread = {}, notify = {}, hooks = {}, logs = {}, console = {},
+        array_index_reads = 0, find_all_calls = 0,
     }, World)
 end
 
-function World:spawn(class_names, props)
-    next_address = next_address + 0x40
+function World:spawn(class_names, props, options)
+    options = options or {}
+    local address = options.address
+    if not address then
+        next_address = next_address + 0x40
+        address = next_address
+    end
+    next_name = next_name + 1
     local obj = {
         _valid = true,
-        _address = next_address,
-        _name = class_names[1] .. " /Game/Mock." .. class_names[1] .. "_" .. next_address,
+        _address = address,
+        _name = class_names[1] .. " /Game/Mock." .. class_names[1] .. "_" .. next_name,
+        _flags = options.flags or 0,
         _props = props or {},
         _classes = {},
         _world = self,
@@ -77,6 +88,11 @@ function World:spawn(class_names, props)
     end
     setmetatable(obj, ObjectMeta)
     self.objects[#self.objects + 1] = obj
+    for _, class_name in ipairs(class_names) do
+        for _, callback in ipairs(self.notify[class_name] or {}) do
+            callback(obj)
+        end
+    end
     return obj
 end
 
@@ -95,9 +111,10 @@ function World:array(items)
 end
 
 function World:find_all(class_name)
+    self.find_all_calls = self.find_all_calls + 1
     local found = {}
     for _, obj in ipairs(self.objects) do
-        if rawget(obj, "_classes")[class_name] then
+        if rawget(obj, "_classes")[class_name] and (rawget(obj, "_flags") & DEFAULT_OBJECT_FLAGS) == 0 then
             found[#found + 1] = obj
         end
     end
@@ -113,7 +130,12 @@ function World:run(script_path)
         return found
     end
     env.FindFirstOf = function(class_name)
-        return world:find_all(class_name)[1]
+        return world:find_all(class_name)[1] or Mock.null
+    end
+    env.NotifyOnNewObject = function(class_path, callback)
+        local short_name = class_path:match("%.([%w_]+)$")
+        world.notify[short_name] = world.notify[short_name] or {}
+        table.insert(world.notify[short_name], callback)
     end
     env.LoopAsync = function(_, callback)
         world.loops[#world.loops + 1] = callback
