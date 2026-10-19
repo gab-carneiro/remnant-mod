@@ -14,11 +14,12 @@ ROW_NAMES = ["1", "2", "3", "4", "5", "6"]
 SPAWN_QUANTITY = [1.0, 1.33, 1.66, 2.0, 2.33, 2.66]
 SPAWN_WEIGHT = [1.0, 1.5, 1.75, 1.6, 1.6, 1.6]
 ENEMY_DAMAGE = [1.0, 1.0, 1.0, 1.10, 1.20, 1.30]
+ENEMY_HEALTH = [1.0, 1.0, 1.0, 1.15, 1.30, 1.45]
+BOSS_HEALTH = [1.0, 1.0, 1.0, 1.35, 1.70, 2.05]
 DAMAGE_SCALARS = ["EnemyDamageScalar", "EliteDamageScalar", "BruteDamageScalar", "BossDamageScalar"]
-UNTOUCHED_SCALARS = [
-    "EnemyHealthScalar", "EliteHealthScalar", "BruteHealthScalar", "BossHealthScalar",
-    "CurrencyScalar", "ExperienceScalar", "FriendlyFireDamageScalar",
-]
+ENEMY_HEALTH_SCALARS = ["EnemyHealthScalar", "EliteHealthScalar", "BruteHealthScalar"]
+UNTOUCHED_SCALARS = ["CurrencyScalar", "ExperienceScalar", "FriendlyFireDamageScalar"]
+ENEMY_SCALING_ENABLED_FILE = os.path.join(ROOT, "ue4ss", "Mods", "EnemyScaling", "enabled.txt")
 UASSET_TAG = 0x9E2A83C1
 
 
@@ -95,7 +96,16 @@ class RowsTest(unittest.TestCase):
             for scalar in DAMAGE_SCALARS:
                 self.assertAlmostEqual(self.rows[name][scalar], damage, places=5, msg=name + " " + scalar)
 
-    def test_health_rewards_and_friendly_fire_stay_vanilla(self):
+    def test_enemy_health_grows_from_4_players_and_bosses_grow_more(self):
+        for name, health, boss in zip(ROW_NAMES, ENEMY_HEALTH, BOSS_HEALTH):
+            for scalar in ENEMY_HEALTH_SCALARS:
+                self.assertAlmostEqual(self.rows[name][scalar], health, places=5, msg=name + " " + scalar)
+            self.assertAlmostEqual(self.rows[name]["BossHealthScalar"], boss, places=5, msg=name + " BossHealthScalar")
+
+    def test_lua_health_scaling_ships_disabled_so_health_is_not_scaled_twice(self):
+        self.assertFalse(os.path.exists(ENEMY_SCALING_ENABLED_FILE))
+
+    def test_rewards_and_friendly_fire_stay_vanilla(self):
         for name in ROW_NAMES:
             for scalar in UNTOUCHED_SCALARS:
                 self.assertAlmostEqual(self.rows[name][scalar], 1.0, places=5, msg=name + " " + scalar)
@@ -108,11 +118,11 @@ class RowsTest(unittest.TestCase):
 
 
 class TestTableTest(unittest.TestCase):
-    def test_solo_gets_triple_spawn_and_damage(self):
+    def test_solo_gets_triple_spawn_health_and_damage(self):
         uasset, uexp = built(test=True)
         rows = ue422.read_data_table_rows(ue422.read_package(uasset, uexp), uexp)
         self.assertAlmostEqual(rows["1"]["SpawnQuantityScalar"], 3.0, places=5)
-        for scalar in DAMAGE_SCALARS:
+        for scalar in DAMAGE_SCALARS + ENEMY_HEALTH_SCALARS + ["BossHealthScalar"]:
             self.assertAlmostEqual(rows["1"][scalar], 3.0, places=5, msg=scalar)
 
     def test_other_rows_match_the_release_table(self):

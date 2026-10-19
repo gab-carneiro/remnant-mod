@@ -33,25 +33,41 @@ local function set_prop(obj, key, value)
     rawget(obj, "_props")[key] = value
 end
 
+local function add_engine(w, world_object)
+    w.viewport = w:spawn({ "GameViewportClient" }, { World = world_object })
+    w.engine = w:spawn({ "GameEngine", "Engine" }, { GameViewport = w.viewport })
+end
+
+local function add_players(w, count)
+    local states = {}
+    for i = 1, count do
+        if not w.player_states[i] then
+            local pc = w:spawn({ "PlayerController", "Controller" }, {})
+            local pawn = w:spawn({ "CharacterGunfire", "Character" }, { MaxHealth = 500, Health = 500, Controller = pc })
+            set_prop(pc, "Pawn", pawn)
+            w.player_pawns[i] = pawn
+            w.player_states[i] = w:spawn({ "PlayerState" }, { PawnPrivate = pawn, Owner = pc })
+        end
+        states[i] = w.player_states[i]
+    end
+    set_prop(w.game_state, "PlayerArray", w:array(states))
+end
+
+local function new_enemy_level(w, players)
+    w.player_pawns = {}
+    w.player_states = {}
+    w.ai = w:spawn({ "AIController", "Controller" }, {})
+    w.game_mode = w:spawn({ "GameModeBase", "GameMode" }, {})
+    w.game_state = w:spawn({ "GameStateBase", "GameState" }, { PlayerArray = w:array({}) })
+    w.world_object = w:spawn({ "World" }, { AuthorityGameMode = w.game_mode, GameState = w.game_state })
+    add_players(w, players)
+end
+
 local function enemy_world(players)
     local w = Mock.world()
-    w.game_state = w:spawn({ "GameStateBase", "GameState" }, { PlayerArray = w:array({}) })
-    w.ai = w:spawn({ "AIController", "Controller" }, {})
-    w.player_pawns = {}
-    w.set_players = function(count)
-        local states = {}
-        for i = 1, count do
-            states[i] = w:spawn({ "PlayerState" }, {})
-            if not w.player_pawns[i] then
-                local pc = w:spawn({ "PlayerController", "Controller" }, {})
-                local pawn = w:spawn({ "CharacterGunfire", "Character" }, { MaxHealth = 500, Health = 500, Controller = pc })
-                set_prop(pc, "Pawn", pawn)
-                w.player_pawns[i] = pawn
-            end
-        end
-        set_prop(w.game_state, "PlayerArray", w:array(states))
-    end
-    w.set_players(players)
+    new_enemy_level(w, players)
+    add_engine(w, w.world_object)
+    w.set_players = function(count) add_players(w, count) end
     return w
 end
 
@@ -76,12 +92,25 @@ test("EnemyScaling: com 6 jogadores o inimigo ganha 75% de vida", function()
     near(prop(enemy, "MaxHealth"), 175, "MaxHealth")
 end)
 
-test("EnemyScaling: com 3 jogadores nada muda (escala nativa do jogo)", function()
+test("EnemyScaling: com 3 jogadores nada muda e nao varre objetos", function()
     local w = enemy_world(3)
     local enemy = spawn_enemy(w, 100)
     w:run(ENEMY_SCALING)
+    w:tick(1)
+    w.find_all_calls = 0
     w:tick(4)
     near(prop(enemy, "MaxHealth"), 100, "MaxHealth")
+    equal(w.find_all_calls, 0, "passadas pelo array global")
+end)
+
+test("EnemyScaling: uma unica passada pelo array global por scan", function()
+    local w = enemy_world(5)
+    spawn_enemy(w, 100)
+    w:run(ENEMY_SCALING)
+    w:tick(2)
+    w.find_all_calls = 0
+    w:tick(4)
+    equal(w.find_all_calls, 4, "passadas pelo array global em 4 scans")
 end)
 
 test("EnemyScaling: de 6 para 4 jogadores reescala relativo e preserva a % de vida", function()
@@ -142,10 +171,10 @@ test("EnemyScaling: personagem de jogador nao recebe vida extra", function()
     end
 end)
 
-test("EnemyScaling: no cliente (IA sem controller) nada e escalado", function()
+test("EnemyScaling: no cliente (sem GameMode) nada e escalado", function()
     local w = enemy_world(6)
     local enemy = spawn_enemy(w, 100)
-    set_prop(enemy, "Controller", Mock.null)
+    set_prop(w.world_object, "AuthorityGameMode", Mock.null)
     w:run(ENEMY_SCALING)
     w:tick(4)
     near(prop(enemy, "MaxHealth"), 100, "MaxHealth")
@@ -162,12 +191,13 @@ test("EnemyScaling: mexe nos inimigos so dentro da game thread", function()
     near(prop(enemy, "MaxHealth"), 125, "MaxHealth depois da game thread")
 end)
 
-test("EnemyScaling: nao registra hook de dano (o dano escala pela DataTable do PAK)", function()
+test("EnemyScaling: nao registra hook nem notificacao de objeto novo", function()
     local w = enemy_world(6)
     spawn_enemy(w, 100)
     w:run(ENEMY_SCALING)
     w:tick(4)
     equal(#w.hooks, 0, "hooks registrados")
+    equal(#w.notify, 0, "NotifyOnNewObject registrados")
 end)
 
 test("EnemyScaling: inimigo que nasce depois do mod ligar tambem escala", function()
@@ -179,18 +209,6 @@ test("EnemyScaling: inimigo que nasce depois do mod ligar tambem escala", functi
     near(prop(enemy, "MaxHealth"), 125, "MaxHealth")
 end)
 
-test("EnemyScaling: depois da primeira passada nao varre mais o array global", function()
-    local w = enemy_world(5)
-    spawn_enemy(w, 100)
-    w:run(ENEMY_SCALING)
-    w:tick(1)
-    w.find_all_calls = 0
-    spawn_enemy(w, 100)
-    w.set_players(4)
-    w:tick(5)
-    equal(w.find_all_calls, 0, "chamadas a FindAllOf/FindFirstOf")
-end)
-
 test("EnemyScaling: inimigo novo no endereco de um morto comeca do zero", function()
     local w = enemy_world(4)
     local first = spawn_enemy(w, 100)
@@ -198,26 +216,43 @@ test("EnemyScaling: inimigo novo no endereco de um morto comeca do zero", functi
     w:tick(2)
     near(prop(first, "MaxHealth"), 125, "MaxHealth do primeiro")
     local address = first:GetAddress()
-    w:destroy(first)
+    w:free(first)
     local second = w:spawn({ "CharacterGunfire", "Character" }, { MaxHealth = 200, Health = 200, Controller = w.ai }, { address = address })
     w:tick(1)
     near(prop(second, "MaxHealth"), 250, "MaxHealth do segundo")
+    equal(w.use_after_free, 0, "acessos a objeto liberado")
 end)
 
-local function net_world(options)
-    options = options or {}
-    local w = Mock.world()
+test("EnemyScaling: troca de mapa nao toca em nada do mapa antigo", function()
+    local w = enemy_world(4)
+    local old_enemy = spawn_enemy(w, 100)
+    w:run(ENEMY_SCALING)
+    w:tick(2)
+    local old = { old_enemy, w.ai, w.game_mode, w.game_state, w.world_object }
+    for _, state in ipairs(w.player_states) do old[#old + 1] = state end
+    for _, pawn in ipairs(w.player_pawns) do old[#old + 1] = pawn end
+    for _, obj in ipairs(old) do w:free(obj) end
+    new_enemy_level(w, 4)
+    set_prop(w.viewport, "World", w.world_object)
+    local new_enemy = spawn_enemy(w, 100)
+    w:tick(3)
+    equal(w.use_after_free, 0, "acessos a objeto liberado")
+    near(prop(new_enemy, "MaxHealth"), 125, "MaxHealth no mapa novo")
+end)
+
+local function connection(w, speed)
+    return w:spawn({ "SteamNetConnection", "IpConnection", "NetConnection", "Player" }, {
+        CurrentNetSpeed = speed or 10000, ConfiguredInternetSpeed = 10000, ConfiguredLanSpeed = 20000,
+    })
+end
+
+local function new_net_level(w, options)
     w.session = w:spawn({ "GameSession" }, { MaxPlayers = 3, MaxSpectators = 2 })
     w.game_mode = w:spawn({ "GameModeBase", "GameMode" }, { GameSession = w.session })
     w.manager = w:spawn({ "GameNetworkManager" }, {
         TotalNetBandwidth = 32000, MaxDynamicBandwidth = 7000, MinDynamicBandwidth = 4000,
     })
-    w.connections = {}
-    for i = 1, 2 do
-        w.connections[i] = w:spawn({ "SteamNetConnection", "IpConnection", "NetConnection", "Player" }, {
-            CurrentNetSpeed = 10000, ConfiguredInternetSpeed = 10000, ConfiguredLanSpeed = 20000,
-        })
-    end
+    w.connections = { connection(w), connection(w) }
     w.driver = w:spawn({ "SteamNetDriver", "IpNetDriver", "NetDriver" }, {
         MaxClientRate = options.max_client_rate or 10000,
         MaxInternetClientRate = 10000,
@@ -225,6 +260,16 @@ local function net_world(options)
         ServerConnection = Mock.null,
         ClientConnections = w:array(w.connections),
     })
+    w.world_object = w:spawn({ "World" }, {
+        AuthorityGameMode = w.game_mode, NetDriver = w.driver, NetworkManager = w.manager,
+    })
+end
+
+local function net_world(options)
+    options = options or {}
+    local w = Mock.world()
+    new_net_level(w, options)
+    add_engine(w, w.world_object)
     w.local_player = w:spawn({ "LocalPlayer", "Player" }, {
         CurrentNetSpeed = 10000, ConfiguredInternetSpeed = 10000, ConfiguredLanSpeed = 20000,
     })
@@ -269,8 +314,8 @@ test("NetOptimize: cada cliente conectado recebe 100000 B/s", function()
     local w = net_world()
     w:run(NET_OPTIMIZE)
     w:tick(1)
-    for i, connection in ipairs(w.connections) do
-        equal(prop(connection, "CurrentNetSpeed"), 100000, "CurrentNetSpeed do cliente " .. i)
+    for i, conn in ipairs(w.connections) do
+        equal(prop(conn, "CurrentNetSpeed"), 100000, "CurrentNetSpeed do cliente " .. i)
     end
 end)
 
@@ -294,13 +339,12 @@ test("NetOptimize: quem reconecta volta para 100000 B/s", function()
     local w = net_world()
     w:run(NET_OPTIMIZE)
     w:tick(1)
-    w:destroy(w.connections[2])
-    local returning = w:spawn({ "SteamNetConnection", "IpConnection", "NetConnection", "Player" }, {
-        CurrentNetSpeed = 10000, ConfiguredInternetSpeed = 10000, ConfiguredLanSpeed = 20000,
-    })
+    w:free(w.connections[2])
+    local returning = connection(w)
     set_prop(w.driver, "ClientConnections", w:array({ w.connections[1], returning }))
     w:tick(1)
     equal(prop(returning, "CurrentNetSpeed"), 100000, "CurrentNetSpeed de quem reconectou")
+    equal(w.use_after_free, 0, "acessos a objeto liberado")
 end)
 
 test("NetOptimize: valor ja maior que o alvo nao e reduzido", function()
@@ -310,21 +354,19 @@ test("NetOptimize: valor ja maior que o alvo nao e reduzido", function()
     equal(prop(w.driver, "MaxClientRate"), 200000, "MaxClientRate")
 end)
 
-test("NetOptimize: no cliente (sem GameMode) nada e alterado", function()
+test("NetOptimize: no cliente (sem GameMode no mundo) nada e alterado", function()
     local w = Mock.world()
-    local server_connection = w:spawn({ "SteamNetConnection", "NetConnection", "Player" }, {
-        CurrentNetSpeed = 10000, ConfiguredInternetSpeed = 10000, ConfiguredLanSpeed = 20000,
-    })
+    local server_connection = connection(w)
     local driver = w:spawn({ "SteamNetDriver", "IpNetDriver", "NetDriver" }, {
         MaxClientRate = 10000, MaxInternetClientRate = 10000, NetServerMaxTickRate = 30,
         ServerConnection = server_connection, ClientConnections = w:array({}),
     })
-    local session = w:spawn({ "GameSession" }, { MaxPlayers = 3 })
+    local world_object = w:spawn({ "World" }, { AuthorityGameMode = Mock.null, NetDriver = driver, NetworkManager = Mock.null })
+    add_engine(w, world_object)
     w:run(NET_OPTIMIZE)
     w:tick(2)
     equal(prop(driver, "MaxClientRate"), 10000, "MaxClientRate do cliente")
     equal(prop(server_connection, "CurrentNetSpeed"), 10000, "CurrentNetSpeed do cliente")
-    equal(prop(session, "MaxPlayers"), 3, "MaxPlayers no cliente")
 end)
 
 test("NetOptimize: mexe na engine so dentro da game thread", function()
@@ -338,50 +380,42 @@ test("NetOptimize: mexe na engine so dentro da game thread", function()
     equal(prop(w.connections[1], "CurrentNetSpeed"), 100000, "CurrentNetSpeed depois da game thread")
 end)
 
-test("NetOptimize: depois da primeira passada nao varre mais o array global", function()
+test("NetOptimize: depois de achar o Engine nao varre mais o array global", function()
     local w = net_world()
     w:run(NET_OPTIMIZE)
     w:tick(1)
     w.find_all_calls = 0
-    w:spawn({ "SteamNetConnection", "IpConnection", "NetConnection", "Player" }, {
-        CurrentNetSpeed = 10000, ConfiguredInternetSpeed = 10000, ConfiguredLanSpeed = 20000,
-    })
     w:tick(5)
-    equal(w.find_all_calls, 0, "chamadas a FindAllOf/FindFirstOf")
+    equal(w.find_all_calls, 0, "passadas pelo array global")
 end)
 
-test("NetOptimize: sala criada depois do mod ligar tambem e ajustada", function()
-    local w = Mock.world()
+test("NetOptimize: troca de mapa nao toca em nada do mapa antigo", function()
+    local w = net_world()
     w:run(NET_OPTIMIZE)
     w:tick(1)
-    local session = w:spawn({ "GameSession" }, { MaxPlayers = 3 })
-    w:spawn({ "GameModeBase", "GameMode" }, { GameSession = session })
-    local manager = w:spawn({ "GameNetworkManager" }, { TotalNetBandwidth = 32000, MaxDynamicBandwidth = 7000 })
-    local driver = w:spawn({ "SteamNetDriver", "IpNetDriver", "NetDriver" }, {
-        MaxClientRate = 10000, MaxInternetClientRate = 10000, ServerConnection = Mock.null,
-    })
-    local connection = w:spawn({ "SteamNetConnection", "IpConnection", "NetConnection", "Player" }, { CurrentNetSpeed = 10000 })
-    w:tick(1)
-    equal(prop(session, "MaxPlayers"), 6, "MaxPlayers")
-    equal(prop(manager, "MaxDynamicBandwidth"), 100000, "MaxDynamicBandwidth")
-    equal(prop(driver, "MaxClientRate"), 100000, "MaxClientRate")
-    equal(prop(connection, "CurrentNetSpeed"), 100000, "CurrentNetSpeed")
-end)
-
-test("NetOptimize: objeto padrao de classe (CDO) de GameMode nao faz o cliente agir como host", function()
-    local w = Mock.world()
-    w:run(NET_OPTIMIZE)
-    w:spawn({ "GameModeBase", "GameMode" }, { GameSession = Mock.null }, { flags = 0x10 })
-    local connection = w:spawn({ "SteamNetConnection", "NetConnection", "Player" }, { CurrentNetSpeed = 10000 })
+    local old = { w.session, w.game_mode, w.manager, w.driver, w.world_object, w.connections[1], w.connections[2] }
+    for _, obj in ipairs(old) do w:free(obj) end
+    new_net_level(w, {})
+    set_prop(w.viewport, "World", w.world_object)
     w:tick(2)
-    equal(prop(connection, "CurrentNetSpeed"), 10000, "CurrentNetSpeed do cliente")
+    equal(w.use_after_free, 0, "acessos a objeto liberado")
+    equal(prop(w.session, "MaxPlayers"), 6, "MaxPlayers no mapa novo")
+    equal(prop(w.connections[1], "CurrentNetSpeed"), 100000, "CurrentNetSpeed no mapa novo")
 end)
 
-test("NetOptimize: nao indexa TArray da engine (no UE4SS 3.0.1 isso pode inserir elementos)", function()
+test("NetOptimize: nao le TArray fora do tamanho (no UE4SS 3.0.1 isso insere elementos)", function()
     local w = net_world()
     w:run(NET_OPTIMIZE)
     w:tick(3)
-    equal(w.array_index_reads, 0, "leituras por indice em TArray")
+    equal(w.array_out_of_bounds_reads, 0, "leituras fora do tamanho do TArray")
+end)
+
+test("NetOptimize: nao registra hook nem notificacao de objeto novo", function()
+    local w = net_world()
+    w:run(NET_OPTIMIZE)
+    w:tick(2)
+    equal(#w.hooks, 0, "hooks registrados")
+    equal(#w.notify, 0, "NotifyOnNewObject registrados")
 end)
 
 test("NetOptimize: o netcode do jogo fica como o original", function()

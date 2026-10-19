@@ -3,16 +3,7 @@ local CLIENT_NET_SPEED = 100000
 local SCAN_INTERVAL_MS = 4000
 local LOG_ENABLED = true
 
-local DEFAULT_OBJECT_FLAGS = 0x30
-local TRACKED_CLASSES = {
-    { name = "GameModeBase", path = "/Script/Engine.GameModeBase" },
-    { name = "GameNetworkManager", path = "/Script/Engine.GameNetworkManager" },
-    { name = "NetDriver", path = "/Script/Engine.NetDriver" },
-    { name = "NetConnection", path = "/Script/Engine.NetConnection" },
-}
-
-local tracked = {}
-local seeded = false
+local engine = nil
 local warned = {}
 
 local function Log(msg)
@@ -21,30 +12,24 @@ local function Log(msg)
     end
 end
 
-local function Track(className, obj)
-    if obj:HasAnyFlags(DEFAULT_OBJECT_FLAGS) then return end
-    tracked[className][obj:GetAddress()] = obj
+local function GetEngine()
+    if engine then return engine end
+    local ok, found = pcall(FindFirstOf, "Engine")
+    if ok and found and found:IsValid() then
+        engine = found
+    end
+    return engine
 end
 
-local function Seed()
-    for _, class in ipairs(TRACKED_CLASSES) do
-        local ok, objects = pcall(FindAllOf, class.name)
-        if ok and objects then
-            for _, obj in ipairs(objects) do
-                if obj:IsValid() then Track(class.name, obj) end
-            end
-        end
-    end
-end
-
-local function ForEachTracked(className, callback)
-    for address, obj in pairs(tracked[className]) do
-        if obj:IsValid() then
-            callback(obj)
-        else
-            tracked[className][address] = nil
-        end
-    end
+local function Child(obj, prop)
+    if not obj then return nil end
+    local ok, child = pcall(function()
+        local value = obj[prop]
+        if value and value:IsValid() then return value end
+        return nil
+    end)
+    if ok then return child end
+    return nil
 end
 
 local function ReadNumber(obj, prop)
@@ -65,47 +50,39 @@ local function Raise(obj, prop, target, label)
     end
 end
 
-local function RaiseLobby()
-    local isServer = false
-    ForEachTracked("GameModeBase", function(gameMode)
-        isServer = true
-        local ok, session = pcall(function() return gameMode.GameSession end)
-        if ok and session and session:IsValid() then
-            Raise(session, "MaxPlayers", MAX_PLAYERS, "GameSession")
+local function RaiseConnections(driver)
+    local ok, count = pcall(function() return driver.ClientConnections:GetArrayNum() end)
+    if not ok or type(count) ~= "number" then return end
+    for i = 1, count do
+        local okItem, connection = pcall(function() return driver.ClientConnections[i] end)
+        if okItem and connection and connection:IsValid() then
+            Raise(connection, "CurrentNetSpeed", CLIENT_NET_SPEED, "Cliente")
         end
-    end)
-    return isServer
-end
-
-local function RaiseBandwidth()
-    ForEachTracked("GameNetworkManager", function(manager)
-        Raise(manager, "TotalNetBandwidth", CLIENT_NET_SPEED * MAX_PLAYERS, "GameNetworkManager")
-        Raise(manager, "MaxDynamicBandwidth", CLIENT_NET_SPEED, "GameNetworkManager")
-    end)
-    ForEachTracked("NetDriver", function(driver)
-        Raise(driver, "MaxClientRate", CLIENT_NET_SPEED, "NetDriver")
-        Raise(driver, "MaxInternetClientRate", CLIENT_NET_SPEED, "NetDriver")
-    end)
-    ForEachTracked("NetConnection", function(connection)
-        Raise(connection, "CurrentNetSpeed", CLIENT_NET_SPEED, "Cliente")
-    end)
+    end
 end
 
 local function Scan()
-    if not seeded then
-        seeded = true
-        Seed()
-    end
-    if RaiseLobby() then
-        RaiseBandwidth()
-    end
-end
+    local world = Child(Child(GetEngine(), "GameViewport"), "World")
+    local gameMode = Child(world, "AuthorityGameMode")
+    if not gameMode then return end
 
-for _, class in ipairs(TRACKED_CLASSES) do
-    tracked[class.name] = {}
-    NotifyOnNewObject(class.path, function(obj)
-        pcall(Track, class.name, obj)
-    end)
+    local session = Child(gameMode, "GameSession")
+    if session then
+        Raise(session, "MaxPlayers", MAX_PLAYERS, "GameSession")
+    end
+
+    local manager = Child(world, "NetworkManager")
+    if manager then
+        Raise(manager, "TotalNetBandwidth", CLIENT_NET_SPEED * MAX_PLAYERS, "GameNetworkManager")
+        Raise(manager, "MaxDynamicBandwidth", CLIENT_NET_SPEED, "GameNetworkManager")
+    end
+
+    local driver = Child(world, "NetDriver")
+    if driver then
+        Raise(driver, "MaxClientRate", CLIENT_NET_SPEED, "NetDriver")
+        Raise(driver, "MaxInternetClientRate", CLIENT_NET_SPEED, "NetDriver")
+        RaiseConnections(driver)
+    end
 end
 
 Log("=== NetOptimize carregado ===")

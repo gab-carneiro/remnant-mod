@@ -1,15 +1,9 @@
 local HEALTH_PER_EXTRA = 0.25
 local BASE_PLAYERS = 3
-local SCAN_INTERVAL_MS = 3000
+local SCAN_INTERVAL_MS = 5000
 local LOG_ENABLED = true
 
 local STABLE_SCANS = 2
-local DEFAULT_OBJECT_FLAGS = 0x30
-local TRACKED_CLASSES = {
-    { name = "Character", path = "/Script/Engine.Character" },
-    { name = "PlayerController", path = "/Script/Engine.PlayerController" },
-    { name = "GameStateBase", path = "/Script/Engine.GameStateBase" },
-}
 local HEALTH_PROPS = {
     { "MaxHealth", "Health" },
     { "MaxHitPoints", "HitPoints" },
@@ -21,13 +15,11 @@ local HEALTH_COMPONENTS = {
     "HealthComponent",
 }
 
+local engine = nil
 local currentPlayers = 0
 local pendingPlayers = -1
 local pendingScans = 0
 local scaledActors = {}
-local tracked = {}
-local latestGameState = nil
-local seeded = false
 
 local function Log(msg)
     if LOG_ENABLED then
@@ -39,51 +31,50 @@ local function HealthMultiplier()
     return 1.0 + math.max(currentPlayers - BASE_PLAYERS, 0) * HEALTH_PER_EXTRA
 end
 
-local function Track(className, obj)
-    if obj:HasAnyFlags(DEFAULT_OBJECT_FLAGS) then return end
-    local address = obj:GetAddress()
-    tracked[className][address] = obj
-    if className == "Character" then
-        scaledActors[address] = nil
-    elseif className == "GameStateBase" then
-        latestGameState = obj
+local function GetEngine()
+    if engine then return engine end
+    local ok, found = pcall(FindFirstOf, "Engine")
+    if ok and found and found:IsValid() then
+        engine = found
     end
+    return engine
 end
 
-local function Seed()
-    for _, class in ipairs(TRACKED_CLASSES) do
-        local ok, objects = pcall(FindAllOf, class.name)
-        if ok and objects then
-            for _, obj in ipairs(objects) do
-                if obj:IsValid() then Track(class.name, obj) end
-            end
+local function Child(obj, prop)
+    if not obj then return nil end
+    local ok, child = pcall(function()
+        local value = obj[prop]
+        if value and value:IsValid() then return value end
+        return nil
+    end)
+    if ok then return child end
+    return nil
+end
+
+local function SafeFullName(obj)
+    local ok, name = pcall(function() return obj:GetFullName() end)
+    if ok and type(name) == "string" then return name end
+    return ""
+end
+
+local function ReadPlayers(gameState)
+    local pawns, controllers = {}, {}
+    local ok, count = pcall(function() return gameState.PlayerArray:GetArrayNum() end)
+    if not ok or type(count) ~= "number" then return 0, pawns, controllers end
+    for i = 1, count do
+        local okItem, playerState = pcall(function() return gameState.PlayerArray[i] end)
+        if okItem and playerState and playerState:IsValid() then
+            local pawn = Child(playerState, "PawnPrivate")
+            if pawn then pawns[pawn:GetAddress()] = true end
+            local controller = Child(playerState, "Owner")
+            if controller then controllers[controller:GetAddress()] = true end
         end
     end
+    return count, pawns, controllers
 end
 
-local function ForEachTracked(className, callback)
-    for address, obj in pairs(tracked[className]) do
-        if obj:IsValid() then
-            callback(obj, address)
-        else
-            tracked[className][address] = nil
-        end
-    end
-end
-
-local function CurrentGameState()
-    if latestGameState and latestGameState:IsValid() then return latestGameState end
-    latestGameState = nil
-    ForEachTracked("GameStateBase", function(state) latestGameState = state end)
-    return latestGameState
-end
-
-local function UpdatePlayerCount()
-    local state = CurrentGameState()
-    if not state then return end
-
-    local ok, count = pcall(function() return state.PlayerArray:GetArrayNum() end)
-    if not ok or type(count) ~= "number" or count <= 0 then
+local function UpdatePlayerCount(count)
+    if count <= 0 then
         pendingScans = 0
         return
     end
@@ -108,24 +99,10 @@ local function UpdatePlayerCount()
     end
 end
 
-local function GetPlayers()
-    local pawns, controllers = {}, {}
-    ForEachTracked("PlayerController", function(pc, address)
-        controllers[address] = true
-        local ok, pawn = pcall(function() return pc.Pawn end)
-        if ok and pawn and pawn:IsValid() then
-            pawns[pawn:GetAddress()] = true
-        end
-    end)
-    return pawns, controllers
-end
-
 local function IsEnemy(actor, playerPawns, playerControllers)
     if playerPawns[actor:GetAddress()] then return false end
-
-    local ok, controller = pcall(function() return actor.Controller end)
-    if not ok or not controller or not controller:IsValid() then return false end
-
+    local controller = Child(actor, "Controller")
+    if not controller then return false end
     return not playerControllers[controller:GetAddress()]
 end
 
@@ -144,8 +121,8 @@ local function FindHealth(actor)
     end
 
     for _, componentName in ipairs(HEALTH_COMPONENTS) do
-        local ok, component = pcall(function() return actor[componentName] end)
-        if ok and component and component:IsValid() then
+        local component = Child(actor, componentName)
+        if component then
             for _, props in ipairs(HEALTH_PROPS) do
                 local maxHp = ReadNumber(component, props[1])
                 if maxHp and maxHp > 0 then
@@ -177,44 +154,45 @@ local function ApplyRatio(actor, ratio)
 end
 
 local function Scan()
-    if not seeded then
-        seeded = true
-        Seed()
-    end
+    local world = Child(Child(GetEngine(), "GameViewport"), "World")
+    if not Child(world, "AuthorityGameMode") then return end
+    local gameState = Child(world, "GameState")
+    if not gameState then return end
 
-    UpdatePlayerCount()
+    local count, playerPawns, playerControllers = ReadPlayers(gameState)
+    UpdatePlayerCount(count)
 
-    local playerPawns, playerControllers = GetPlayers()
     local mult = HealthMultiplier()
-
     if mult <= 1.0 and next(scaledActors) == nil then return end
 
+    local ok, actors = pcall(FindAllOf, "Character")
+    if not ok or not actors then actors = {} end
+
     local seen = {}
-    ForEachTracked("Character", function(actor, address)
-        local entry = scaledActors[address]
-        if entry then
-            seen[address] = true
-            if math.abs(entry.mult - mult) > 0.0001 and ApplyRatio(actor, mult / entry.mult) then
-                entry.mult = mult
-            end
-        elseif mult > 1.0 and IsEnemy(actor, playerPawns, playerControllers) then
-            if ApplyRatio(actor, mult) then
-                scaledActors[address] = { mult = mult }
+    for _, actor in ipairs(actors) do
+        if actor:IsValid() then
+            local address = actor:GetAddress()
+            local name = SafeFullName(actor)
+            local entry = scaledActors[address]
+            if entry and entry.name ~= name then entry = nil end
+
+            if entry then
                 seen[address] = true
+                if math.abs(entry.mult - mult) > 0.0001 and ApplyRatio(actor, mult / entry.mult) then
+                    entry.mult = mult
+                end
+            elseif mult > 1.0 and IsEnemy(actor, playerPawns, playerControllers) then
+                if ApplyRatio(actor, mult) then
+                    scaledActors[address] = { name = name, mult = mult }
+                    seen[address] = true
+                end
             end
         end
-    end)
+    end
 
     for address in pairs(scaledActors) do
         if not seen[address] then scaledActors[address] = nil end
     end
-end
-
-for _, class in ipairs(TRACKED_CLASSES) do
-    tracked[class.name] = {}
-    NotifyOnNewObject(class.path, function(obj)
-        pcall(Track, class.name, obj)
-    end)
 end
 
 Log("=== EnemyScaling carregado ===")

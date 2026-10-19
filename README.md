@@ -8,7 +8,7 @@ Mod que libera co-op de ate **6 jogadores** no **Remnant: From the Ashes**, com 
 |---|---|---|
 | `6player_P.pak` | **Obrigatorio** | Nao precisa |
 | UE4SS + NetOptimize | **Obrigatorio** | Nao precisa |
-| EnemyScaling | Recomendado | Nao precisa |
+| EnemyScaling | Vem desligado; so se o teste mandar | Nao precisa |
 
 > **Resumo:** so o host instala. Quem entra na sala joga com o jogo original.
 
@@ -40,7 +40,7 @@ Remnant\
     UE4SS-settings.ini
     Mods\
       NetOptimize\Scripts\main.lua
-      EnemyScaling\Scripts\main.lua
+      EnemyScaling\Scripts\main.lua   (reserva, desligado)
 ```
 
 ---
@@ -51,13 +51,14 @@ O PAK so funciona se o jogo carregar ele, e isso so da para confirmar jogando. F
 
 1. Baixe `6player_TESTE_P.pak` na mesma release
 2. Em `Remnant\Content\Paks\~mods\`, tire o `6player_P.pak` e coloque o `6player_TESTE_P.pak` no lugar
-3. Jogue solo alguns minutos numa area com inimigos. Com o PAK de teste o solo fica com **3x mais inimigos** e os golpes deles tiram **3x mais vida**
+3. Jogue solo alguns minutos numa area com inimigos. Com o PAK de teste o solo fica com **3x mais inimigos**, que aguentam **3x mais tiros** e cujos golpes tiram **3x mais vida**
 4. Apague o `6player_TESTE_P.pak` e volte o `6player_P.pak`
 
 | O que aconteceu | Significado |
 |---|---|
-| Mais inimigos e mais dano | Tudo certo |
-| Mais inimigos, dano normal | O PAK carregou, mas o jogo nao usa a coluna de dano da tabela. Abra uma issue |
+| Mais inimigos, mais resistentes e batendo mais forte | Tudo certo |
+| Inimigos com a resistencia normal | O jogo nao usa a coluna de vida da tabela: ative o EnemyScaling (veja [Vida pelo Lua](#vida-pelo-lua-reserva)) |
+| Golpes com o dano normal | O jogo nao usa a coluna de dano da tabela. Abra uma issue |
 | Nada mudou | O PAK nao carregou. Abra uma issue |
 
 ---
@@ -84,27 +85,34 @@ Tambem fica tudo logado em `Win64\UE4SS.log`.
 
 ## Dificuldade
 
-| Jogadores | Quantidade de inimigos | Vida dos inimigos | Dano dos inimigos |
-|---|---|---|---|
-| 1 | 1.00x | 1.00x | 1.00x |
-| 2 | 1.33x | 1.00x | 1.00x |
-| 3 | 1.66x | 1.00x | 1.00x |
-| 4 | 2.00x | 1.25x | 1.10x |
-| 5 | 2.33x | 1.50x | 1.20x |
-| 6 | 2.66x | 1.75x | 1.30x |
+| Jogadores | Quantidade de inimigos | Vida (comum, elite, brute) | Vida (chefe) | Dano dos inimigos |
+|---|---|---|---|---|
+| 1 | 1.00x | 1.00x | 1.00x | 1.00x |
+| 2 | 1.33x | 1.00x | 1.00x | 1.00x |
+| 3 | 1.66x | 1.00x | 1.00x | 1.00x |
+| 4 | 2.00x | 1.15x | 1.35x | 1.10x |
+| 5 | 2.33x | 1.30x | 1.70x | 1.20x |
+| 6 | 2.66x | 1.45x | 2.05x | 1.30x |
 
-- **Quantidade de inimigos:** tabela nativa do jogo (`Stats_Scaling_NumPlayers`). As linhas 1 a 4 sao do proprio Remnant; o PAK acrescenta 5 e 6 seguindo a mesma progressao
-- **Dano:** coluna de dano da mesma tabela, aplicada pelo jogo em todos os tipos de inimigo (comum, elite, brute e chefe)
-- **Vida:** EnemyScaling. Quando alguem sai ou entra, os inimigos vivos se ajustam ao novo valor mantendo a % de vida; inimigo morto nao e tocado
+Tudo isso sai da tabela nativa do jogo (`Stats_Scaling_NumPlayers`), que o proprio Remnant aplica em cada tipo de inimigo. As linhas 1 a 4 sao do jogo; o PAK acrescenta 5 e 6 seguindo a mesma progressao de quantidade, e liga as colunas de vida e dano a partir de 4 jogadores.
 
-Na tabela original do jogo, vida e dano ficam em 1.0 de 1 a 4 jogadores; so a quantidade de inimigos muda. Com 6 jogadores ha o dobro de poder de fogo de 3, mas so 1.6x mais inimigos, por isso a vida e o dano extras.
+Na tabela original, vida e dano ficam em 1.0 de 1 a 4 jogadores; so a quantidade de inimigos muda. Com 6 jogadores ha o dobro de poder de fogo de 3, mas so 1.6x mais inimigos, por isso a vida e o dano extras. O chefe escala mais porque nao vem mais chefes com mais jogadores: com 6, ele aguenta o dobro, o mesmo que os 3 jogadores a mais tiram dele.
 
 ### Ajustar
 
-| O que | Onde | Padrao |
+Edite no topo de `rebuild_scaling.py`, rode `python build_pak.py` e troque o `6player_P.pak`:
+
+| Variavel | Padrao | Descricao |
 |---|---|---|
-| Vida | `HEALTH_PER_EXTRA` no topo de `EnemyScaling/Scripts/main.lua` (reinicie o jogo) | `0.25` = +25% por jogador acima de 3 |
-| Dano | `DAMAGE_PER_EXTRA` em `rebuild_scaling.py`, depois rode `python build_pak.py` e troque o `6player_P.pak` | `0.10` = +10% por jogador acima de 3 |
+| `HEALTH_PER_EXTRA` | `0.15` | +15% de vida (comum, elite, brute) por jogador acima de 3 |
+| `BOSS_HEALTH_PER_EXTRA` | `0.35` | +35% de vida do chefe por jogador acima de 3 |
+| `DAMAGE_PER_EXTRA` | `0.10` | +10% de dano por jogador acima de 3 |
+
+### Vida pelo Lua (reserva)
+
+O EnemyScaling so serve se o teste de 2 minutos mostrar que o jogo ignora a coluna de vida. Ele vem **desligado**; para ligar, crie um arquivo vazio `enabled.txt` em `Mods\EnemyScaling\`. Nao ligue com a coluna de vida funcionando, senao a vida escala duas vezes.
+
+Ele da +25% de vida por jogador acima de 3, igual para todos os inimigos (`HEALTH_PER_EXTRA` no topo do `main.lua`). Quando alguem sai ou entra, os inimigos vivos se ajustam mantendo a % de vida. Para achar os inimigos ele percorre a lista de objetos do jogo a cada 5 s, o que pode causar uma travadinha leve no host.
 
 ---
 
@@ -127,7 +135,7 @@ O NetOptimize (so no host) sobe esse limite para **100 KB/s por cliente**, o pad
 |---|---|
 | PAK | Delete `6player_P.pak` da pasta `~mods` |
 | NetOptimize | Delete `Mods/NetOptimize/` ou remova `enabled.txt` |
-| EnemyScaling | Delete `Mods/EnemyScaling/` ou remova `enabled.txt` |
+| EnemyScaling | Delete `Mods/EnemyScaling/` (ou so o `enabled.txt`, se voce tiver ligado) |
 | UE4SS | Delete `dwmapi.dll`, `UE4SS.dll`, `UE4SS-settings.ini` e `Mods/` |
 
 ---
@@ -150,10 +158,9 @@ O NetOptimize (so no host) sobe esse limite para **100 KB/s por cliente**, o pad
 - **PAK:** desde a conversao para o formato v8 ele nunca tinha carregado. O rodape nao tinha o GUID de criptografia, e o Unreal 4.22 lia lixo no lugar, achava que o PAK era criptografado e adiava a montagem para sempre. Agora monta, e se chama `6player_P.pak` porque no Unreal 4.22 so um PAK terminado em `_P` tem prioridade sobre o PAK do proprio jogo
 - **PAK:** agora so leva a DataTable de escala. O `DefaultGame.ini` saiu: ele substituia o arquivo inteiro do jogo por uma copia antiga, e as secoes de rede estavam no arquivo errado (o jogo le essas configs do `Engine.ini`, entao nunca valeram)
 - **DataTable:** os nomes das linhas "5" e "6" estavam com hash 0, e com isso o jogo nao encontrava essas linhas. Dois offsets do cabecalho tinham ficado 20 bytes atras, o que faria o jogo ler lixo como dependencia ao carregar a tabela, e o `BulkDataStartOffset` nao acompanhava as linhas novas. Tudo corrigido
-- **Dano:** o hook antigo nunca rodava (`Context:IsValid()` sempre saia da funcao). O dano agora escala pela coluna nativa da tabela
-- **Vida:** +25% por jogador acima de 3 (era +35%), porque com 5 e 6 jogadores agora tambem vem mais inimigos
+- **Vida e dano** agora escalam pela tabela nativa do jogo, por tipo de inimigo, com o chefe escalando mais. O hook de dano antigo nunca rodava (`Context:IsValid()` sempre saia da funcao), e a vida pelo Lua nao distinguia chefe de inimigo comum. O EnemyScaling virou reserva, desligado
 - **NetOptimize reescrito:** a banda de 100 KB/s por cliente e aplicada onde o servidor realmente le (o fix da v1.1 gravava um campo que o servidor ignora). Sairam smoothing, prioridade de rede e as 12 CVars, 7 das quais nem existem no Unreal 4.22
-- **NetOptimize e EnemyScaling** rodam na game thread e nao varrem mais a lista inteira de objetos do jogo a cada scan: fazem uma passada ao ligar e depois acompanham os objetos novos conforme sao criados, sem travadinha periodica no host
+- **NetOptimize** roda na game thread e chega na sala, na rede e nas conexoes a partir do proprio motor do jogo, sem varrer a lista de objetos e sem guardar referencia de um mapa para o outro
 - **Clientes** nao precisam mais instalar nada
 - Testes automatizados em `tests/`
 
@@ -179,7 +186,7 @@ remnant-mod/
   original/            DataTable original do jogo (linhas 1 a 4), entrada do build
   ue4ss/Mods/
     NetOptimize/       Limite da sala + banda por cliente
-    EnemyScaling/      Vida extra a partir de 4 jogadores
+    EnemyScaling/      Reserva: vida extra pelo Lua (desligado)
   tests/               Testes (Python e Lua)
 ```
 
@@ -187,7 +194,7 @@ remnant-mod/
 
 ```bash
 python build_pak.py            # 6player_P.pak
-python build_pak.py --teste    # 6player_TESTE_P.pak (solo com 3x inimigos e 3x dano)
+python build_pak.py --teste    # 6player_TESTE_P.pak (solo com 3x inimigos, 3x vida e 3x dano)
 python rebuild_scaling.py      # so a DataTable, em modified/, para inspecionar
 ```
 

@@ -10,6 +10,8 @@ ORIGINAL_DIR = os.path.join(ROOT, "original", TABLE_DIR)
 OUTPUT_DIR = os.path.join(ROOT, "modified", TABLE_DIR)
 
 BASE_PLAYERS = 3
+HEALTH_PER_EXTRA = 0.15
+BOSS_HEALTH_PER_EXTRA = 0.35
 DAMAGE_PER_EXTRA = 0.10
 NEW_ROWS = {
     "5": {"SpawnQuantityScalar": 2.33, "SpawnWeightScalar": 1.60},
@@ -17,6 +19,8 @@ NEW_ROWS = {
 }
 NEW_ROW_TEMPLATE = "4"
 DAMAGE_SCALARS = ("EnemyDamageScalar", "EliteDamageScalar", "BruteDamageScalar", "BossDamageScalar")
+HEALTH_SCALARS = ("EnemyHealthScalar", "EliteHealthScalar", "BruteHealthScalar")
+BOSS_HEALTH_SCALAR = "BossHealthScalar"
 TEST_ROW = "1"
 TEST_SCALE = 3.0
 
@@ -167,12 +171,15 @@ def _read_rows(body, names):
 
 def _row_values(row_name, test):
     values = dict(NEW_ROWS.get(row_name, {}))
-    damage = 1.0 + max(int(row_name) - BASE_PLAYERS, 0) * DAMAGE_PER_EXTRA
+    extra = max(int(row_name) - BASE_PLAYERS, 0)
+    for scalar in HEALTH_SCALARS:
+        values[scalar] = 1.0 + extra * HEALTH_PER_EXTRA
+    values[BOSS_HEALTH_SCALAR] = 1.0 + extra * BOSS_HEALTH_PER_EXTRA
     for scalar in DAMAGE_SCALARS:
-        values[scalar] = damage
+        values[scalar] = 1.0 + extra * DAMAGE_PER_EXTRA
     if test and row_name == TEST_ROW:
         values["SpawnQuantityScalar"] = TEST_SCALE
-        for scalar in DAMAGE_SCALARS:
+        for scalar in HEALTH_SCALARS + (BOSS_HEALTH_SCALAR,) + DAMAGE_SCALARS:
             values[scalar] = TEST_SCALE
     return values
 
@@ -248,7 +255,7 @@ def load_original():
 
 def main():
     parser = argparse.ArgumentParser(description="Gera a DataTable de escala por jogadores (linhas 1 a 6) em modified/.")
-    parser.add_argument("--teste", dest="test", action="store_true", help="tabela de teste: solo com 3x inimigos e 3x dano")
+    parser.add_argument("--teste", dest="test", action="store_true", help="tabela de teste: solo com 3x inimigos, 3x vida e 3x dano")
     args = parser.parse_args()
     uasset, uexp = build_table(*load_original(), test=args.test)
     os.makedirs(OUTPUT_DIR, exist_ok=True)

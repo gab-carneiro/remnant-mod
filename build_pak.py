@@ -60,7 +60,7 @@ def build_release_pak(test=False):
 def main():
     parser = argparse.ArgumentParser(description="Gera o PAK do mod: a DataTable de escala por jogadores (linhas 1 a 6).")
     parser.add_argument("--teste", dest="test", action="store_true",
-                        help="gera %s: solo com 3x inimigos e 3x dano, para confirmar que o jogo carrega o PAK" % TEST_OUTPUT_NAME)
+                        help="gera %s: solo com 3x inimigos, 3x vida e 3x dano, para confirmar que o jogo carrega o PAK" % TEST_OUTPUT_NAME)
     args = parser.parse_args()
     name = TEST_OUTPUT_NAME if args.test else OUTPUT_NAME
     pak = build_release_pak(test=args.test)

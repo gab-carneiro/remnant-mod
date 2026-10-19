@@ -5,12 +5,33 @@ local DEFAULT_OBJECT_FLAGS = 0x30
 local next_address = 0x10000
 local next_name = 0
 
+local function check_alive(self)
+    if rawget(self, "_freed") then
+        local world = rawget(self, "_world")
+        world.use_after_free = world.use_after_free + 1
+        error("use-after-free: " .. rawget(self, "_name"))
+    end
+end
+
 local methods = {
-    IsValid = function(self) return rawget(self, "_valid") end,
-    GetAddress = function(self) return rawget(self, "_address") end,
-    GetFullName = function(self) return rawget(self, "_name") end,
-    HasAnyFlags = function(self, flags) return (rawget(self, "_flags") & flags) ~= 0 end,
+    IsValid = function(self)
+        check_alive(self)
+        return rawget(self, "_valid")
+    end,
+    GetAddress = function(self)
+        check_alive(self)
+        return rawget(self, "_address")
+    end,
+    GetFullName = function(self)
+        check_alive(self)
+        return rawget(self, "_name")
+    end,
+    HasAnyFlags = function(self, flags)
+        check_alive(self)
+        return (rawget(self, "_flags") & flags) ~= 0
+    end,
     ConsoleCommand = function(self, command)
+        check_alive(self)
         local world = rawget(self, "_world")
         world.console[#world.console + 1] = command
     end,
@@ -20,6 +41,7 @@ local ObjectMeta = {}
 
 ObjectMeta.__index = function(self, key)
     if methods[key] then return methods[key] end
+    check_alive(self)
     local value = rawget(self, "_props")[key]
     if value == nil then
         return Mock.null
@@ -28,6 +50,7 @@ ObjectMeta.__index = function(self, key)
 end
 
 ObjectMeta.__newindex = function(self, key, value)
+    check_alive(self)
     local props = rawget(self, "_props")
     if props[key] == nil then
         error("propriedade inexistente: " .. tostring(key))
@@ -45,8 +68,12 @@ ArrayMeta.__index = function(self, key)
         return function() return #items end
     end
     if type(key) == "number" then
-        local world = rawget(self, "_world")
-        world.array_index_reads = world.array_index_reads + 1
+        if key < 1 or key > #items then
+            local world = rawget(self, "_world")
+            world.array_out_of_bounds_reads = world.array_out_of_bounds_reads + 1
+            items[#items + 1] = Mock.null
+            return Mock.null
+        end
         return items[key]
     end
     error("membro inexistente em TArray: " .. tostring(key))
@@ -62,7 +89,7 @@ World.__index = World
 function Mock.world()
     return setmetatable({
         objects = {}, loops = {}, game_thread = {}, notify = {}, hooks = {}, logs = {}, console = {},
-        array_index_reads = 0, find_all_calls = 0,
+        array_out_of_bounds_reads = 0, find_all_calls = 0, use_after_free = 0,
     }, World)
 end
 
@@ -88,11 +115,6 @@ function World:spawn(class_names, props, options)
     end
     setmetatable(obj, ObjectMeta)
     self.objects[#self.objects + 1] = obj
-    for _, class_name in ipairs(class_names) do
-        for _, callback in ipairs(self.notify[class_name] or {}) do
-            callback(obj)
-        end
-    end
     return obj
 end
 
@@ -104,6 +126,11 @@ function World:destroy(obj)
             return
         end
     end
+end
+
+function World:free(obj)
+    self:destroy(obj)
+    rawset(obj, "_freed", true)
 end
 
 function World:array(items)
@@ -133,9 +160,7 @@ function World:run(script_path)
         return world:find_all(class_name)[1] or Mock.null
     end
     env.NotifyOnNewObject = function(class_path, callback)
-        local short_name = class_path:match("%.([%w_]+)$")
-        world.notify[short_name] = world.notify[short_name] or {}
-        table.insert(world.notify[short_name], callback)
+        world.notify[#world.notify + 1] = class_path
     end
     env.LoopAsync = function(_, callback)
         world.loops[#world.loops + 1] = callback
