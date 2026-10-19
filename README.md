@@ -1,116 +1,74 @@
-# Remnant: From the Ashes — 6 Player Co-op Mod
+# Remnant: From the Ashes — Co-op ate 6 jogadores
 
-Mod que aumenta o limite de jogadores em sessoes co-op do **Remnant: From the Ashes** de 3 para **6 jogadores**, com otimizacoes de rede, scaling de inimigos e protecoes contra crash.
+Mod que libera co-op de ate **6 jogadores** no **Remnant: From the Ashes**, com os inimigos escalando para nao ficar facil e a rede do host ajustada para aguentar 5 clientes.
 
-## Quem precisa instalar o que
+## Quem instala o que
 
 | Componente | Host (quem cria a sala) | Clientes (quem entra) |
 |---|---|---|
-| `6player.pak` | **Obrigatorio** | **Obrigatorio** |
-| UE4SS + NetOptimize | **Obrigatorio** | Opcional (melhora rede) |
-| EnemyScaling | Opcional (balanceamento) | Nao precisa |
+| `6player_P.pak` | **Obrigatorio** | Nao precisa |
+| UE4SS + NetOptimize | **Obrigatorio** | Nao precisa |
+| EnemyScaling | Recomendado | Nao precisa |
 
-> **Resumo:** Todos precisam do PAK. O **host** precisa do UE4SS + NetOptimize para o lobby aceitar mais de 3 pessoas.
+> **Resumo:** so o host instala. Quem entra na sala joga com o jogo original.
 
 ---
 
-## Instalacao rapida (recomendado)
+## Instalacao (host)
 
 1. Baixe `remnant-6players.zip` na pagina de [Releases](../../releases)
 2. Abra a pasta do jogo: Steam > botao direito em Remnant: From the Ashes > **Gerenciar** > **Ver arquivos locais**
    (normalmente `C:\Program Files (x86)\Steam\steamapps\common\Remnant\`)
 3. Extraia o zip **dentro dessa pasta** e aceite mesclar/substituir. O zip ja vem com a pasta `Remnant\` na estrutura certa:
    ```
-   Remnant\Content\Paks\~mods\6player.pak
+   Remnant\Content\Paks\~mods\6player_P.pak
    Remnant\Binaries\Win64\Mods\NetOptimize\...
    Remnant\Binaries\Win64\Mods\EnemyScaling\...
    ```
-4. **So o host:** baixe o [UE4SS v3.0.1](https://github.com/UE4SS-RE/RE-UE4SS/releases/tag/v3.0.1) (`UE4SS_v3.0.1.zip`, nao o "zDEV") e extraia em `Remnant\Remnant\Binaries\Win64\`
-5. Pronto. Quem so entra na sala precisa apenas dos passos 1-3 (na pratica, so do `6player.pak`).
-
-> **Atualizando de uma versao antiga?** Extraia o zip novo por cima. Os scripts `main.lua` do NetOptimize e do EnemyScaling mudaram; o `6player.pak` e o mesmo.
-
----
-
-## Changelog
-
-### v1.1 — fix de mobs bugando ao sair/entrar na sala
-
-- **EnemyScaling:** quando alguem saia ou entrava, o mod re-multiplicava a vida de todos os inimigos em cima do valor ja escalado e curava eles 100%. Depois de 2 sai/entra com 5 players um mob de 100 HP ficava com ~900 HP, e mobs mortos voltavam com milhares de HP. Agora:
-  - o mod lembra o multiplicador aplicado em cada inimigo e ajusta so a diferenca, mantendo a % de vida atual (sem cura gratis)
-  - inimigos mortos nao sao tocados
-  - a contagem de jogadores so muda depois de ficar estavel por ~6s (durante loading/join ela oscila)
-  - o personagem de um jogador que acabou de reconectar nao e mais confundido com inimigo (antes ganhava HP escalado)
-- **NetOptimize:** jogador que reconectava podia ficar com banda de 10KB/s (mobs teleportando/travando pra ele); o reset de configuracoes ao trocar de zona nao funcionava. Ambos corrigidos.
-
----
-
-## Instalacao (passo a passo)
-
-### 1 — Localizar a pasta do jogo
-
-Steam > botao direito em Remnant > **Gerenciar** > **Ver arquivos locais**
-
-```
-C:\Program Files (x86)\Steam\steamapps\common\Remnant\
-```
-
-### 2 — Instalar o PAK mod (todos os jogadores)
-
-1. Baixe `6player.pak` da pagina de [Releases](../../releases)
-2. Crie a pasta `~mods` dentro de `Remnant\Content\Paks\` (se nao existir)
-3. Copie `6player.pak` para `~mods`
-
-```
-Remnant\Content\Paks\
-  ~mods\
-    6player.pak    <-- aqui
-```
-
-### 3 — Instalar o UE4SS (obrigatorio para o host)
-
-1. Baixe [UE4SS v3.0.1](https://github.com/UE4SS-RE/RE-UE4SS/releases/tag/v3.0.1) (zip normal, nao "zDEV")
-2. Extraia tudo em `Remnant\Binaries\Win64\`
-3. Se tinha UE4SS antigo, delete o `xinput1_3.dll` (v3.0+ usa `dwmapi.dll`)
-
-### 4 — Instalar NetOptimize (obrigatorio para o host)
-
-Copie a pasta `ue4ss/Mods/NetOptimize/` deste repositorio para `Win64\Mods\`:
-
-```
-Win64\Mods\
-  NetOptimize\
-    Scripts\main.lua
-    enabled.txt
-```
-
-### 5 — Instalar EnemyScaling (opcional, so host)
-
-Copie `ue4ss/Mods/EnemyScaling/` para `Win64\Mods\EnemyScaling\`
+4. Baixe o [UE4SS v3.0.1](https://github.com/UE4SS-RE/RE-UE4SS/releases/tag/v3.0.1) (`UE4SS_v3.0.1.zip`, nao o "zDEV") e extraia em `Remnant\Binaries\Win64\`, a mesma pasta onde ficou a pasta `Mods` do passo 3
+5. **Atualizando de versao antiga?** Apague `Remnant\Content\Paks\~mods\6player.pak` (sem o `_P`). Ele nunca chegou a carregar no jogo
 
 ### Resultado final
 
 ```
 Remnant\
   Content\Paks\~mods\
-    6player.pak
+    6player_P.pak
   Binaries\Win64\
     dwmapi.dll          (UE4SS)
     UE4SS.dll
     UE4SS-settings.ini
     Mods\
       NetOptimize\Scripts\main.lua
-      EnemyScaling\Scripts\main.lua   (opcional)
+      EnemyScaling\Scripts\main.lua
 ```
+
+---
+
+## Teste de 2 minutos: o PAK carregou?
+
+O PAK so funciona se o jogo carregar ele, e isso so da para confirmar jogando. Faca uma vez, solo:
+
+1. Baixe `6player_TESTE_P.pak` na mesma release
+2. Em `Remnant\Content\Paks\~mods\`, tire o `6player_P.pak` e coloque o `6player_TESTE_P.pak` no lugar
+3. Jogue solo alguns minutos numa area com inimigos. Com o PAK de teste o solo fica com **3x mais inimigos** e os golpes deles tiram **3x mais vida**
+4. Apague o `6player_TESTE_P.pak` e volte o `6player_P.pak`
+
+| O que aconteceu | Significado |
+|---|---|
+| Mais inimigos e mais dano | Tudo certo |
+| Mais inimigos, dano normal | O PAK carregou, mas o jogo nao usa a coluna de dano da tabela. Abra uma issue |
+| Nada mudou | O PAK nao carregou. Abra uma issue |
 
 ---
 
 ## Como jogar
 
 1. **Host** inicia o jogo normalmente
-2. No console UE4SS, confirme: `[NetOptimize] === Lobby override aplicado! ===`
+2. No console do UE4SS aparece `[NetOptimize] === NetOptimize carregado ===` e, ao entrar no mundo, `[NetOptimize] GameSession.MaxPlayers 3 -> 6`
 3. Convide amigos via **Steam** (Shift+Tab > convidar) ou eles clicam "Entrar no Jogo" no perfil do host
-4. A UI do lobby mostra so 2-3 slots, **mas jogadores extras entram normalmente**
+4. A cada amigo que entra aparece algo como `[NetOptimize] Cliente.CurrentNetSpeed 10000 -> 100000` (o primeiro numero e a banda que o jogo tinha dado para ele)
+5. A UI do lobby mostra so 2-3 slots, **mas jogadores extras entram normalmente**
 
 ### Console do UE4SS
 
@@ -124,64 +82,53 @@ Tambem fica tudo logado em `Win64\UE4SS.log`.
 
 ---
 
+## Dificuldade
+
+| Jogadores | Quantidade de inimigos | Vida dos inimigos | Dano dos inimigos |
+|---|---|---|---|
+| 1 | 1.00x | 1.00x | 1.00x |
+| 2 | 1.33x | 1.00x | 1.00x |
+| 3 | 1.66x | 1.00x | 1.00x |
+| 4 | 2.00x | 1.25x | 1.10x |
+| 5 | 2.33x | 1.50x | 1.20x |
+| 6 | 2.66x | 1.75x | 1.30x |
+
+- **Quantidade de inimigos:** tabela nativa do jogo (`Stats_Scaling_NumPlayers`). As linhas 1 a 4 sao do proprio Remnant; o PAK acrescenta 5 e 6 seguindo a mesma progressao
+- **Dano:** coluna de dano da mesma tabela, aplicada pelo jogo em todos os tipos de inimigo (comum, elite, brute e chefe)
+- **Vida:** EnemyScaling. Quando alguem sai ou entra, os inimigos vivos se ajustam ao novo valor mantendo a % de vida; inimigo morto nao e tocado
+
+Na tabela original do jogo, vida e dano ficam em 1.0 de 1 a 4 jogadores; so a quantidade de inimigos muda. Com 6 jogadores ha o dobro de poder de fogo de 3, mas so 1.6x mais inimigos, por isso a vida e o dano extras.
+
+### Ajustar
+
+| O que | Onde | Padrao |
+|---|---|---|
+| Vida | `HEALTH_PER_EXTRA` no topo de `EnemyScaling/Scripts/main.lua` (reinicie o jogo) | `0.25` = +25% por jogador acima de 3 |
+| Dano | `DAMAGE_PER_EXTRA` em `rebuild_scaling.py`, depois rode `python build_pak.py` e troque o `6player_P.pak` | `0.10` = +10% por jogador acima de 3 |
+
+---
+
+## Rede
+
+Pelo padrao da Unreal 4, o host manda no maximo **10 KB/s** para cada cliente. Com 6 jogadores e mais inimigos esse limite estoura e os inimigos comecam a teleportar para quem entrou.
+
+O NetOptimize (so no host) sobe esse limite para **100 KB/s por cliente**, o padrao das versoes novas da Unreal, e nao mexe em mais nada do netcode: smoothing, tick rate e relevancia ficam como o jogo vem. O limite e um teto, nao um consumo; no pior caso, 5 clientes usariam cerca de 4 Mbps de upload do host.
+
+| Variavel (`NetOptimize/Scripts/main.lua`) | Padrao | Descricao |
+|---|---|---|
+| `MAX_PLAYERS` | `6` | Limite da sala |
+| `CLIENT_NET_SPEED` | `100000` | Banda maxima por cliente, em bytes/s |
+
+---
+
 ## Desinstalacao
 
 | Componente | Como remover |
 |---|---|
-| PAK mod | Delete `6player.pak` da pasta `~mods` |
+| PAK | Delete `6player_P.pak` da pasta `~mods` |
 | NetOptimize | Delete `Mods/NetOptimize/` ou remova `enabled.txt` |
 | EnemyScaling | Delete `Mods/EnemyScaling/` ou remova `enabled.txt` |
 | UE4SS | Delete `dwmapi.dll`, `UE4SS.dll`, `UE4SS-settings.ini` e `Mods/` |
-
----
-
-## Configuracao avancada
-
-### EnemyScaling
-
-Edite os valores no topo de `EnemyScaling/Scripts/main.lua`:
-
-| Variavel | Padrao | Descricao |
-|---|---|---|
-| `HEALTH_PER_EXTRA` | `0.35` | +35% HP por jogador acima de 3 |
-| `DAMAGE_PER_EXTRA` | `0.15` | +15% dano por jogador acima de 3 |
-
-| Jogadores | HP dos inimigos | Dano nos jogadores |
-|---|---|---|
-| 1-3 | 1.00x (scaling nativo do jogo) | 1.00x |
-| 4 | 1.35x | 1.15x |
-| 5 | 1.70x | 1.30x |
-| 6 | 2.05x | 1.45x |
-
-Se alguem sai ou entra, os inimigos ja vivos sao ajustados para o novo valor mantendo a % de vida.
-
-### NetOptimize
-
-| Variavel | Padrao | Descricao |
-|---|---|---|
-| `MAX_PLAYERS_FALLBACK` | `6` | Fallback se leitura do GameSession falhar |
-| `SMOOTH_LOCATION_TIME` | `0.100` | Interpolacao de posicao (s) |
-| `MAX_SMOOTH_DISTANCE` | `512.0` | Distancia max para suavizar |
-| `PLAYER_NET_PRIORITY` | `3.0` | Prioridade de rede dos jogadores |
-| `MIN_NET_UPDATE_FREQ` | `15.0` | Update minimo de rede (Hz) |
-
-### Gerando PAK customizado
-
-```bash
-# Requer Python 3
-
-# 1. Gerar DataTable com scaling para N players
-python rebuild_scaling.py
-
-# 2. Gerar PAK
-python build_pak.py --players 8
-```
-
-| Flag | Padrao | Descricao |
-|---|---|---|
-| `--players` | `6` | Numero maximo de jogadores |
-| `--output` | `{N}player.pak` | Nome do arquivo de saida |
-| `--no-scaling` | — | Nao incluir DataTable de scaling |
 
 ---
 
@@ -189,82 +136,68 @@ python build_pak.py --players 8
 
 | Limitacao | Detalhe |
 |---|---|
-| UI do lobby | Mostra 2-3 slots. Jogadores extras entram, mas nao aparecem na lista. |
-| Spawn points | O jogo tem 4 spawn points fixos. Players 5-6 reutilizam posicoes existentes. |
-| Compatibilidade | Apenas **Remnant: From the Ashes** (UE4). Nao funciona com Remnant 2. |
-| Host obrigatorio | O host precisa de UE4SS + NetOptimize. |
+| UI do lobby | Mostra 2-3 slots. Jogadores extras entram, mas nao aparecem na lista |
+| Spawn points | O jogo tem 4 spawn points fixos. Jogadores 5 e 6 reutilizam posicoes existentes |
+| Compatibilidade | Apenas **Remnant: From the Ashes** (Unreal 4.22). Nao funciona com Remnant 2 |
+| Host obrigatorio | Quem cria a sala precisa de UE4SS + NetOptimize |
 
 ---
 
-## Como funciona
+## Changelog
 
-### Camadas do mod
+### v1.2 — PAK carregando de verdade, dano e rede funcionando
 
-```
-+----------------------------------------------------------+
-|  Camada 4: UE4SS Lua (runtime)                           |
-|  NetOptimize: forca MaxPlayers, CVars, smoothing,        |
-|  detecta zone travel, monitora death/respawn             |
-|  EnemyScaling: escala HP/dano dos inimigos               |
-+----------------------------------------------------------+
-|  Camada 3: DataTable Stats_Scaling_NumPlayers (PAK)      |
-|  Tabela de scaling nativa com rows para 5P e 6P          |
-+----------------------------------------------------------+
-|  Camada 2: DefaultGame.ini (PAK)                         |
-|  MaxPlayers=6, bandwidth, tick rate, timeouts            |
-+----------------------------------------------------------+
-|  Camada 1: Jogo original (MaxPlayers=3)                  |
-+----------------------------------------------------------+
-```
+- **PAK:** desde a conversao para o formato v8 ele nunca tinha carregado. O rodape nao tinha o GUID de criptografia, e o Unreal 4.22 lia lixo no lugar, achava que o PAK era criptografado e adiava a montagem para sempre. Agora monta, e se chama `6player_P.pak` porque no Unreal 4.22 so um PAK terminado em `_P` tem prioridade sobre o PAK do proprio jogo
+- **PAK:** agora so leva a DataTable de escala. O `DefaultGame.ini` saiu: ele substituia o arquivo inteiro do jogo por uma copia antiga, e as secoes de rede estavam no arquivo errado (o jogo le essas configs do `Engine.ini`, entao nunca valeram)
+- **DataTable:** os nomes das linhas "5" e "6" estavam com hash 0, e com isso o jogo nao encontrava essas linhas. Tres offsets do cabecalho tinham ficado 20 bytes atras, o que faria o jogo ler lixo como dependencia ao carregar a tabela. Os dois corrigidos
+- **Dano:** o hook antigo nunca rodava (`Context:IsValid()` sempre saia da funcao). O dano agora escala pela coluna nativa da tabela
+- **Vida:** +25% por jogador acima de 3 (era +35%), porque com 5 e 6 jogadores agora tambem vem mais inimigos
+- **NetOptimize reescrito:** a banda de 100 KB/s por cliente e aplicada onde o servidor realmente le (o fix da v1.1 gravava um campo que o servidor ignora). Sairam smoothing, prioridade de rede e as 12 CVars, 7 das quais nem existem no Unreal 4.22
+- **NetOptimize e EnemyScaling** rodam na game thread
+- **Clientes** nao precisam mais instalar nada
+- Testes automatizados em `tests/`
 
-### Protecoes contra crash
+### v1.1 — fix de mobs bugando ao sair/entrar na sala
 
-| Protecao | Descricao |
-|---|---|
-| DataTable 6 rows | `FindRow("5")` e `FindRow("6")` retornam dados validos em vez de nullptr |
-| Lobby persistente | MaxPlayers verificado a cada 4s, re-aplicado se o jogo resetar para 3 |
-| Zone travel detection | Detecta mudanca de zona e re-aplica lobby, CVars, smoothing automaticamente |
-| Death monitoring | Monitora players alive/dead, loga avisos em team wipe com 5+ players |
-| Spawn point fallback | Engine faz round-robin se ha mais players que spawn points |
-| Bandwidth forcing | Forca 200KB/s em todos os clientes (default e 10KB/s sem mod) |
-
-### DataTable de scaling
-
-| Property | 1P | 2P | 3P | 4P | 5P | 6P |
-|---|---|---|---|---|---|---|
-| SpawnQuantity | 1.00 | 1.33 | 1.66 | 2.00 | 2.33 | 2.66 |
-| SpawnWeight | 1.00 | 1.50 | 1.75 | 1.60 | 1.60 | 1.60 |
-
-### Otimizacoes de rede (PAK)
-
-| Config | Default | Mod | Efeito |
-|---|---|---|---|
-| NetServerMaxTickRate | 30 | 60 | Tick rate do servidor |
-| MaxClientRate | 15,000 | 200,000 | Banda max por cliente |
-| TotalNetBandwidth | 32,000 | 1,200,000 | Banda total |
-| MAXPOSITIONERRORSQUARED | 3.0 | 25.0 | Tolerancia de posicao |
-
-### CVars aplicadas em runtime
-
-| CVar | Valor | Efeito |
-|---|---|---|
-| `p.NetEnableListenServerSmoothing` | `1` | Smoothing no listen server |
-| `p.NetClientSmoothingMode` | `2` | Interpolacao exponencial |
-| `net.DisableBandwidthThrottling` | `1` | Evita stall de bandwidth |
-| `net.MaxRPCPerNetUpdate` | `4` | Limita RPCs por tick |
+- **EnemyScaling:** quando alguem saia ou entrava, o mod re-multiplicava a vida de todos os inimigos em cima do valor ja escalado e curava eles 100%. Agora:
+  - o mod lembra o multiplicador aplicado em cada inimigo e ajusta so a diferenca, mantendo a % de vida atual
+  - inimigos mortos nao sao tocados
+  - a contagem de jogadores so muda depois de ficar estavel por ~6s
+  - o personagem de um jogador que acabou de reconectar nao e mais confundido com inimigo
 
 ---
 
-## Estrutura do projeto
+## Para desenvolvedores
+
+### Estrutura do projeto
 
 ```
 remnant-mod/
-  6player.pak          PAK pronto para uso
-  4player.pak          PAK base (input do build_pak)
-  build_pak.py         Gerador de PAK v8
-  rebuild_scaling.py   Gerador de DataTable com N rows
-  modified/            DataTable modificada (gerada pelo rebuild_scaling)
+  6player_P.pak        PAK pronto para uso (gerado pelo build_pak.py)
+  build_pak.py         Gera o PAK v8 (Unreal 4.22)
+  rebuild_scaling.py   Gera a DataTable com as linhas 1 a 6 a partir da original
+  original/            DataTable original do jogo (linhas 1 a 4), entrada do build
   ue4ss/Mods/
-    NetOptimize/       Lobby override + rede + protecoes
-    EnemyScaling/      Scaling de HP/dano extra
+    NetOptimize/       Limite da sala + banda por cliente
+    EnemyScaling/      Vida extra a partir de 4 jogadores
+  tests/               Testes (Python e Lua)
 ```
+
+### Gerar o PAK
+
+```bash
+python build_pak.py            # 6player_P.pak
+python build_pak.py --teste    # 6player_TESTE_P.pak (solo com 3x inimigos e 3x dano)
+python rebuild_scaling.py      # so a DataTable, em modified/, para inspecionar
+```
+
+Requer Python 3, sem dependencias.
+
+### Testes
+
+```bash
+python -m unittest discover -s tests
+lua tests/lua/run.lua          # Lua 5.4
+```
+
+`tests/ue422.py` reproduz como o Unreal 4.22 le um PAK (rodape, indice, prioridade entre PAKs) e um pacote cozido; os testes do PAK e da DataTable passam por ele. `tests/lua/ue4ss_mock.lua` simula a API do UE4SS 3.0.1 usada pelos mods.
