@@ -1,348 +1,271 @@
-"""
-rebuild_scaling.py — Rebuilds Stats_Scaling_NumPlayers with rows for 5 and 6 players.
-Uses targeted binary patching instead of full header parsing.
-"""
+import argparse
+import os
+import struct
+import zlib
 
-import struct, os
+ROOT = os.path.dirname(os.path.abspath(__file__))
+TABLE_NAME = "Stats_Scaling_NumPlayers"
+TABLE_DIR = os.path.join("Remnant", "Content", "_Core", "Stats")
+ORIGINAL_DIR = os.path.join(ROOT, "original", TABLE_DIR)
+OUTPUT_DIR = os.path.join(ROOT, "modified", TABLE_DIR)
 
-BASE = "C:/Users/joaop/Desenvolvimento/Projects/remnant-mod/extracted"
-OUTPUT = "C:/Users/joaop/Desenvolvimento/Projects/remnant-mod/modified"
+BASE_PLAYERS = 3
+HEALTH_PER_EXTRA = 0.15
+BOSS_HEALTH_PER_EXTRA = 0.35
+DAMAGE_PER_EXTRA = 0.10
+NEW_ROWS = {
+    "5": {"SpawnQuantityScalar": 2.33, "SpawnWeightScalar": 1.60},
+    "6": {"SpawnQuantityScalar": 2.66, "SpawnWeightScalar": 1.60},
+}
+NEW_ROW_TEMPLATE = "4"
+DAMAGE_SCALARS = ("EnemyDamageScalar", "EliteDamageScalar", "BruteDamageScalar", "BossDamageScalar")
+HEALTH_SCALARS = ("EnemyHealthScalar", "EliteHealthScalar", "BruteHealthScalar")
+BOSS_HEALTH_SCALAR = "BossHealthScalar"
+TEST_ROW = "1"
+TEST_SCALE = 3.0
 
-UASSET_PATH = os.path.join(BASE, "Remnant/Content/_Core/Stats/Stats_Scaling_NumPlayers.uasset")
-UEXP_PATH = os.path.join(BASE, "Remnant/Content/_Core/Stats/Stats_Scaling_NumPlayers.uexp")
+PACKAGE_TAG = 0x9E2A83C1
+SUPPORTED_LEGACY_VERSION = -7
+HEADER_OFFSET_FIELDS = (
+    "gatherable_text_offset", "export_offset", "import_offset", "depends_offset",
+    "soft_package_references_offset", "searchable_names_offset", "thumbnail_table_offset",
+    "asset_registry_data_offset", "world_tile_info_data_offset", "preload_dependency_offset",
+)
+EXPORT_SERIAL_SIZE_POSITION = 28
 
 
-def find_all_int32(data, value):
-    """Find all offsets where int32 == value."""
-    results = []
-    for off in range(0, len(data) - 3):
-        if struct.unpack_from('<i', data, off)[0] == value:
-            results.append(off)
-    return results
+def _legacy_crc_table():
+    table = []
+    for index in range(256):
+        crc = index << 24
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x04C11DB7) & 0xFFFFFFFF if crc & 0x80000000 else (crc << 1) & 0xFFFFFFFF
+        table.append(crc)
+    return table
 
 
-def read_fstring_at(data, off):
-    """Read FString at offset, return (string, end_offset)."""
-    slen = struct.unpack_from('<i', data, off)[0]; off += 4
-    if slen > 0:
-        s = data[off:off + slen - 1].decode('utf-8', errors='replace')
-        off += slen
-        return s, off
-    elif slen < 0:
-        chars = -slen
-        s = data[off:off + chars * 2].decode('utf-16-le', errors='replace').rstrip('\x00')
-        off += chars * 2
-        return s, off
-    return '', off
+_LEGACY_CRC_TABLE = _legacy_crc_table()
+
+
+def ue4_name_hash(name):
+    non_case = 0
+    for byte in name.upper().encode("latin1"):
+        non_case = ((non_case >> 8) & 0x00FFFFFF) ^ _LEGACY_CRC_TABLE[(non_case ^ byte) & 0xFF]
+    case = zlib.crc32(name.encode("utf-32-le"))
+    return non_case & 0xFFFF, case & 0xFFFF
+
+
+class _Cursor:
+    def __init__(self, data, offset=0):
+        self.data = data
+        self.offset = offset
+
+    def i32(self):
+        value = struct.unpack_from("<i", self.data, self.offset)[0]
+        self.offset += 4
+        return value
+
+    def skip(self, size):
+        self.offset += size
+
+    def skip_fstring(self):
+        length = self.i32()
+        self.skip(length if length >= 0 else -2 * length)
+
+    def mark(self, size=4):
+        position = self.offset
+        self.skip(size)
+        return position
+
+
+def _locate_summary_fields(uasset):
+    cursor = _Cursor(uasset)
+    if struct.unpack_from("<I", uasset, 0)[0] != PACKAGE_TAG:
+        raise ValueError("nao e um .uasset")
+    cursor.skip(4)
+    if cursor.i32() != SUPPORTED_LEGACY_VERSION:
+        raise ValueError("versao de pacote diferente da do Remnant (UE 4.22)")
+    cursor.skip(12)
+    cursor.skip(cursor.i32() * 20)
+    fields = {"total_header_size": cursor.mark()}
+    cursor.skip_fstring()
+    cursor.skip(4)
+    for key in ("name_count", "name_offset", "gatherable_text_count", "gatherable_text_offset",
+                "export_count", "export_offset", "import_count", "import_offset", "depends_offset",
+                "soft_package_references_count", "soft_package_references_offset",
+                "searchable_names_offset", "thumbnail_table_offset"):
+        fields[key] = cursor.mark()
+    cursor.skip(16)
+    generation_count = cursor.i32()
+    fields["generations"] = [cursor.offset + 8 * index for index in range(generation_count)]
+    cursor.skip(8 * generation_count)
+    for _ in range(2):
+        cursor.skip(10)
+        cursor.skip_fstring()
+    cursor.skip(4)
+    if cursor.i32() != 0:
+        raise ValueError("pacote comprimido nao e suportado")
+    cursor.skip(4)
+    for _ in range(cursor.i32()):
+        cursor.skip_fstring()
+    fields["asset_registry_data_offset"] = cursor.mark()
+    fields["bulk_data_start_offset"] = cursor.mark(8)
+    fields["world_tile_info_data_offset"] = cursor.mark()
+    cursor.skip(4 * cursor.i32())
+    fields["preload_dependency_count"] = cursor.mark()
+    fields["preload_dependency_offset"] = cursor.mark()
+    return fields
+
+
+def _read_names(uasset, offset, count):
+    cursor = _Cursor(uasset, offset)
+    names = []
+    for _ in range(count):
+        length = cursor.i32()
+        if length < 0:
+            raise ValueError("nome UTF-16 nao e suportado")
+        names.append(uasset[cursor.offset:cursor.offset + length - 1].decode("latin1"))
+        cursor.skip(length + 4)
+    return names, cursor.offset
+
+
+def _name_entry(name):
+    encoded = (name + "\0").encode("latin1")
+    non_case, case = ue4_name_hash(name)
+    return struct.pack("<i", len(encoded)) + encoded + struct.pack("<HH", non_case, case)
+
+
+def _read_rows(body, names):
+    cursor = _Cursor(body)
+    while names[cursor.i32()] != "None":
+        cursor.skip(12)
+        size = cursor.i32()
+        cursor.skip(4 + 1 + size)
+    cursor.skip(4)
+    if cursor.i32() != 0:
+        raise ValueError("DataTable com GUID de objeto nao e suportada")
+    num_rows_position = cursor.offset
+    rows = {}
+    for _ in range(cursor.i32()):
+        start = cursor.offset
+        row_name = names[cursor.i32()]
+        cursor.skip(4)
+        value_positions = {}
+        while True:
+            prop = names[cursor.i32()]
+            cursor.skip(4)
+            if prop == "None":
+                break
+            if names[cursor.i32()] != "FloatProperty":
+                raise ValueError("a linha %s tem propriedade que nao e float" % row_name)
+            cursor.skip(4)
+            size = cursor.i32()
+            cursor.skip(4 + 1)
+            value_positions[prop.split("_")[0]] = cursor.offset
+            cursor.skip(size)
+        rows[row_name] = (start, cursor.offset, value_positions)
+    if cursor.offset != len(body):
+        raise ValueError("sobraram bytes depois das linhas da DataTable")
+    return num_rows_position, rows
+
+
+def _row_values(row_name, test):
+    values = dict(NEW_ROWS.get(row_name, {}))
+    extra = max(int(row_name) - BASE_PLAYERS, 0)
+    for scalar in HEALTH_SCALARS:
+        values[scalar] = 1.0 + extra * HEALTH_PER_EXTRA
+    values[BOSS_HEALTH_SCALAR] = 1.0 + extra * BOSS_HEALTH_PER_EXTRA
+    for scalar in DAMAGE_SCALARS:
+        values[scalar] = 1.0 + extra * DAMAGE_PER_EXTRA
+    if test and row_name == TEST_ROW:
+        values["SpawnQuantityScalar"] = TEST_SCALE
+        for scalar in HEALTH_SCALARS + (BOSS_HEALTH_SCALAR,) + DAMAGE_SCALARS:
+            values[scalar] = TEST_SCALE
+    return values
+
+
+def _write_values(buffer, base, value_positions, values):
+    for scalar, value in values.items():
+        struct.pack_into("<f", buffer, value_positions[scalar] - base, value)
+
+
+def build_table(uasset, uexp, test=False):
+    header = bytearray(uasset)
+    fields = _locate_summary_fields(header)
+
+    def read(key):
+        return struct.unpack_from("<i", header, fields[key])[0]
+
+    def write(key, value):
+        struct.pack_into("<i", header, fields[key], value)
+
+    if read("export_count") != 1:
+        raise ValueError("esperava uma DataTable com um unico export")
+    old_name_count = read("name_count")
+    names, name_table_end = _read_names(header, read("name_offset"), old_name_count)
+
+    body = bytearray(uexp[:-4])
+    tag = uexp[-4:]
+    num_rows_position, rows = _read_rows(body, names)
+    if any(name in rows for name in NEW_ROWS):
+        raise ValueError("a tabela ja tem as linhas novas; use a tabela original")
+
+    for row_name, (start, _, value_positions) in rows.items():
+        _write_values(body, 0, value_positions, _row_values(row_name, test))
+
+    template_start, template_end, template_positions = rows[NEW_ROW_TEMPLATE]
+    template = body[template_start:template_end]
+    new_names = list(NEW_ROWS)
+    for row_name in new_names:
+        row = bytearray(template)
+        struct.pack_into("<i", row, 0, len(names) + new_names.index(row_name))
+        _write_values(row, template_start, template_positions, _row_values(row_name, test))
+        body += row
+    struct.pack_into("<i", body, num_rows_position, len(rows) + len(new_names))
+
+    inserted = b"".join(_name_entry(name) for name in new_names)
+    header[name_table_end:name_table_end] = inserted
+    shift = len(inserted)
+    new_name_count = old_name_count + len(new_names)
+    write("name_count", new_name_count)
+    write("total_header_size", read("total_header_size") + shift)
+    for key in HEADER_OFFSET_FIELDS:
+        if read(key) >= name_table_end:
+            write(key, read(key) + shift)
+    for position in fields["generations"]:
+        export_count, name_count = struct.unpack_from("<ii", header, position)
+        if name_count == old_name_count:
+            struct.pack_into("<ii", header, position, export_count, new_name_count)
+
+    total_header_size = read("total_header_size")
+    serial_position = read("export_offset") + EXPORT_SERIAL_SIZE_POSITION
+    struct.pack_into("<qq", header, serial_position, len(body), total_header_size)
+    struct.pack_into("<q", header, fields["bulk_data_start_offset"], total_header_size + len(body))
+
+    if len(header) != total_header_size:
+        raise ValueError("TotalHeaderSize nao bate com o tamanho do .uasset")
+    return bytes(header), bytes(body + tag)
+
+
+def load_original():
+    base = os.path.join(ORIGINAL_DIR, TABLE_NAME)
+    with open(base + ".uasset", "rb") as uasset, open(base + ".uexp", "rb") as uexp:
+        return uasset.read(), uexp.read()
 
 
 def main():
-    os.makedirs(OUTPUT, exist_ok=True)
-
-    with open(UASSET_PATH, 'rb') as f:
-        uasset_orig = f.read()
-    with open(UEXP_PATH, 'rb') as f:
-        uexp_orig = f.read()
-
-    print(f"Original .uasset: {len(uasset_orig)} bytes")
-    print(f"Original .uexp: {len(uexp_orig)} bytes")
-
-    # === STEP 1: Understand the uasset structure ===
-    # We know from previous analysis:
-    # - NameCount = 32, NameOffset = 193
-    # - The header is at the beginning, name table at offset 193
-    # Let me find these values in the header
-
-    # Parse minimal header
-    off = 0
-    tag = struct.unpack_from('<I', uasset_orig, off)[0]; off += 4
-    assert tag == 0x9E2A83C1, f"Bad magic: 0x{tag:08X}"
-
-    legacy_ver = struct.unpack_from('<i', uasset_orig, off)[0]; off += 4
-    off += 4  # legacy UE3
-    off += 4  # file version UE4
-    off += 4  # file version licensee
-
-    # Custom versions
-    if legacy_ver <= -7:
-        num_custom = struct.unpack_from('<i', uasset_orig, off)[0]; off += 4
-        off += num_custom * 20
-
-    total_hdr_size_off = off
-    total_hdr_size = struct.unpack_from('<i', uasset_orig, off)[0]; off += 4
-
-    # FolderName
-    folder_str, off = read_fstring_at(uasset_orig, off)
-
-    pkg_flags_off = off
-    off += 4  # package flags
-
-    name_count_off = off
-    name_count = struct.unpack_from('<i', uasset_orig, off)[0]; off += 4
-    name_offset_off = off
-    name_offset = struct.unpack_from('<i', uasset_orig, off)[0]; off += 4
-
-    # Gatherable text
-    gath_count_off = off; off += 4
-    gath_offset_off = off
-    gath_offset = struct.unpack_from('<i', uasset_orig, off)[0]; off += 4
-
-    export_count_off = off
-    export_count = struct.unpack_from('<i', uasset_orig, off)[0]; off += 4
-    export_offset_off = off
-    export_offset = struct.unpack_from('<i', uasset_orig, off)[0]; off += 4
-
-    import_count_off = off
-    import_count = struct.unpack_from('<i', uasset_orig, off)[0]; off += 4
-    import_offset_off = off
-    import_offset = struct.unpack_from('<i', uasset_orig, off)[0]; off += 4
-
-    depends_offset_off = off
-    depends_offset = struct.unpack_from('<i', uasset_orig, off)[0]; off += 4
-
-    soft_pkg_count_off = off; off += 4
-    soft_pkg_offset_off = off
-    soft_pkg_offset = struct.unpack_from('<i', uasset_orig, off)[0]; off += 4
-
-    searchable_offset_off = off
-    searchable_offset = struct.unpack_from('<i', uasset_orig, off)[0]; off += 4
-
-    thumbnail_offset_off = off
-    thumbnail_offset = struct.unpack_from('<i', uasset_orig, off)[0]; off += 4
-
-    print(f"\nHeader fields:")
-    print(f"  TotalHeaderSize: {total_hdr_size} (at offset {total_hdr_size_off})")
-    print(f"  NameCount: {name_count} (at offset {name_count_off})")
-    print(f"  NameOffset: {name_offset} (at offset {name_offset_off})")
-    print(f"  GathOffset: {gath_offset} (at offset {gath_offset_off})")
-    print(f"  ExportCount: {export_count} (at offset {export_count_off})")
-    print(f"  ExportOffset: {export_offset} (at offset {export_offset_off})")
-    print(f"  ImportCount: {import_count} (at offset {import_count_off})")
-    print(f"  ImportOffset: {import_offset} (at offset {import_offset_off})")
-    print(f"  DependsOffset: {depends_offset} (at offset {depends_offset_off})")
-    print(f"  SoftPkgOffset: {soft_pkg_offset} (at offset {soft_pkg_offset_off})")
-    print(f"  SearchableOffset: {searchable_offset} (at offset {searchable_offset_off})")
-    print(f"  ThumbnailOffset: {thumbnail_offset} (at offset {thumbnail_offset_off})")
-
-    # === STEP 2: Read name table ===
-    names = []
-    nt_off = name_offset
-    for i in range(name_count):
-        s, nt_off = read_fstring_at(uasset_orig, nt_off)
-        h = struct.unpack_from('<I', uasset_orig, nt_off)[0]; nt_off += 4
-        names.append((s, h))
-
-    name_table_end = nt_off
-    print(f"\n  Name table: {name_offset} - {name_table_end} ({name_table_end - name_offset} bytes)")
-
-    # === STEP 3: Build new name entries ===
-    # "5" = int32(2) + "5\0" + uint32(hash)
-    def build_name_entry(s, hash_val=0):
-        encoded = (s + '\x00').encode('utf-8')
-        return struct.pack('<i', len(encoded)) + encoded + struct.pack('<I', hash_val)
-
-    name5 = build_name_entry("5")
-    name6 = build_name_entry("6")
-    extra = name5 + name6
-    shift = len(extra)
-
-    print(f"\n  Adding 2 names: {shift} bytes inserted at offset {name_table_end}")
-
-    # === STEP 4: Build new .uasset ===
-    new_uasset = bytearray()
-    new_uasset += uasset_orig[:name_table_end]
-    new_uasset += extra
-    new_uasset += uasset_orig[name_table_end:]
-
-    # Patch NameCount
-    struct.pack_into('<i', new_uasset, name_count_off, name_count + 2)
-
-    # Patch TotalHeaderSize
-    struct.pack_into('<i', new_uasset, total_hdr_size_off, total_hdr_size + shift)
-
-    # Patch all offsets that are >= name_table_end
-    offset_fields = [
-        ('GathOffset', gath_offset_off, gath_offset),
-        ('ExportOffset', export_offset_off, export_offset),
-        ('ImportOffset', import_offset_off, import_offset),
-        ('DependsOffset', depends_offset_off, depends_offset),
-        ('SoftPkgOffset', soft_pkg_offset_off, soft_pkg_offset),
-        ('SearchableOffset', searchable_offset_off, searchable_offset),
-        ('ThumbnailOffset', thumbnail_offset_off, thumbnail_offset),
-    ]
-
-    for field_name, field_off, old_val in offset_fields:
-        if old_val > 0 and old_val >= name_table_end:
-            new_val = old_val + shift
-            struct.pack_into('<i', new_uasset, field_off, new_val)
-            print(f"  Shifted {field_name}: {old_val} -> {new_val}")
-
-    # Find and update generation name counts
-    # Search for the generation array by looking for the guid followed by gen data
-    # The guid is 16 bytes, then int32 gen_count, then gen_count * (int32 export_count + int32 name_count)
-    # We know name_count=32, so look for int32=32 after the guid area
-    # Actually, let me search for int32=32 that's in the generation array
-    # It should be at an even offset, paired with an export count (likely 1 or 2)
-
-    # Scan the header area for generation entries
-    # Generations come after: guid(16) + gen_count(4)
-    # Each gen: export_count(4) + name_count(4)
-    # The name_count in generations should match the package name_count
-
-    # Find GUID (16 bytes) in the header - it's after the searchable/thumbnail offsets
-    # Let's find it by looking for gen_count=1 followed by (export_count, 32)
-    print("\n  Looking for generation entries...")
-    for scan_off in range(off, min(off + 200, len(new_uasset) - 16)):
-        gen_count = struct.unpack_from('<i', new_uasset, scan_off)[0]
-        if gen_count == 1:
-            # Check if next 8 bytes look like a generation entry
-            gen_exports = struct.unpack_from('<i', new_uasset, scan_off + 4)[0]
-            gen_names = struct.unpack_from('<i', new_uasset, scan_off + 8)[0]
-            if gen_names == name_count and 0 < gen_exports < 100:
-                print(f"  Found generation at offset {scan_off}: exports={gen_exports}, names={gen_names}")
-                # Patch name count in generation
-                struct.pack_into('<i', new_uasset, scan_off + 8, gen_names + 2)
-                print(f"  Patched generation names: {gen_names} -> {gen_names + 2}")
-                break
-
-    # Find and update export entry's SerialSize
-    # Export table entry layout for UE4:
-    # int32 ClassIndex, int32 SuperIndex, int32 TemplateIndex, int32 OuterIndex,
-    # FName ObjectName (int32 + int32), uint32 ObjectFlags,
-    # int64 SerialSize, int64 SerialOffset, ...
-    if export_count > 0:
-        exp_table_off = export_offset + shift  # shifted
-        print(f"\n  Export table at offset {exp_table_off}:")
-
-        # Read export entry fields
-        e_off = exp_table_off
-        class_idx = struct.unpack_from('<i', new_uasset, e_off)[0]; e_off += 4
-        super_idx = struct.unpack_from('<i', new_uasset, e_off)[0]; e_off += 4
-        template_idx = struct.unpack_from('<i', new_uasset, e_off)[0]; e_off += 4
-        outer_idx = struct.unpack_from('<i', new_uasset, e_off)[0]; e_off += 4
-        obj_name_idx = struct.unpack_from('<i', new_uasset, e_off)[0]; e_off += 4
-        obj_name_extra = struct.unpack_from('<i', new_uasset, e_off)[0]; e_off += 4
-        obj_flags = struct.unpack_from('<I', new_uasset, e_off)[0]; e_off += 4
-
-        serial_size_off = e_off
-        serial_size = struct.unpack_from('<q', new_uasset, e_off)[0]; e_off += 8
-        serial_offset = struct.unpack_from('<q', new_uasset, e_off)[0]; e_off += 8
-
-        obj_name = names[obj_name_idx][0] if 0 <= obj_name_idx < len(names) else f"idx{obj_name_idx}"
-        print(f"    ClassIdx={class_idx}, SuperIdx={super_idx}, Name='{obj_name}'")
-        print(f"    SerialSize={serial_size} at offset {serial_size_off}")
-        print(f"    SerialOffset={serial_offset}")
-
-        # Calculate new serial size (uexp will be bigger)
-        row_size = 8 + 13 * 29 + 8  # FName + 13 properties + None = 393
-        new_serial_size = serial_size + 2 * row_size
-        struct.pack_into('<q', new_uasset, serial_size_off, new_serial_size)
-        print(f"    New SerialSize: {serial_size} -> {new_serial_size}")
-
-        # Patch SerialOffset to match new TotalHeaderSize
-        new_serial_offset = total_hdr_size + shift
-        struct.pack_into('<q', new_uasset, serial_size_off + 8, new_serial_offset)
-        print(f"    New SerialOffset: {serial_offset} -> {new_serial_offset}")
-
-    # === STEP 5: Build new .uexp ===
-    print(f"\n--- Building new .uexp ---")
-
-    # Row data builder
-    def build_row(row_name_idx, values):
-        """Build one DataTable row (FName + 13 props + None)."""
-        row = bytearray()
-        row += struct.pack('<ii', row_name_idx, 0)  # FName
-
-        props = [
-            (19, "EnemyHealthScalar"),
-            (18, "EnemyDamageScalar"),
-            (27, "SpawnQuantityScalar"),
-            (28, "SpawnWeightScalar"),
-            (13, "CurrencyScalar"),
-            (20, "ExperienceScalar"),
-            (22, "FriendlyFireDamageScalar"),
-            (17, "EliteHealthScalar"),
-            (16, "EliteDamageScalar"),
-            (11, "BruteHealthScalar"),
-            (10, "BruteDamageScalar"),
-            (9, "BossHealthScalar"),
-            (8, "BossDamageScalar"),
-        ]
-
-        for idx, name in props:
-            row += struct.pack('<ii', idx, 0)   # prop name FName
-            row += struct.pack('<ii', 21, 0)    # "FloatProperty" FName
-            row += struct.pack('<ii', 4, 0)     # size=4, arrayIdx=0
-            row += struct.pack('<B', 0)          # no guid
-            row += struct.pack('<f', values.get(name, 1.0))
-
-        row += struct.pack('<ii', 23, 0)  # None terminator
-        return row
-
-    idx_5 = len(names)      # 32
-    idx_6 = len(names) + 1  # 33
-
-    row5 = build_row(idx_5, {"SpawnQuantityScalar": 2.33, "SpawnWeightScalar": 1.60})
-    row6 = build_row(idx_6, {"SpawnQuantityScalar": 2.66, "SpawnWeightScalar": 1.60})
-
-    print(f"  Row 5: {len(row5)} bytes")
-    print(f"  Row 6: {len(row6)} bytes")
-
-    # Build new uexp
-    footer = uexp_orig[-4:]  # C1 83 2A 9E
-    new_uexp = bytearray(uexp_orig[:-4])  # everything except footer
-    new_uexp += row5 + row6 + footer
-
-    # Patch NumRows: 4 -> 6 at offset 41
-    struct.pack_into('<i', new_uexp, 41, 6)
-
-    print(f"  New .uexp: {len(new_uexp)} bytes (was {len(uexp_orig)})")
-
-    # === STEP 6: Save files ===
-    out_dir = os.path.join(OUTPUT, "Remnant/Content/_Core/Stats")
-    os.makedirs(out_dir, exist_ok=True)
-
-    uasset_out = os.path.join(out_dir, "Stats_Scaling_NumPlayers.uasset")
-    uexp_out = os.path.join(out_dir, "Stats_Scaling_NumPlayers.uexp")
-
-    with open(uasset_out, 'wb') as f:
-        f.write(new_uasset)
-    with open(uexp_out, 'wb') as f:
-        f.write(new_uexp)
-
-    print(f"\n  Saved: {uasset_out} ({len(new_uasset)} bytes)")
-    print(f"  Saved: {uexp_out} ({len(new_uexp)} bytes)")
-
-    # === STEP 7: Verify ===
-    print(f"\n--- Verification ---")
-    name_map = {i: n[0] for i, n in enumerate(names)}
-    name_map[idx_5] = "5"
-    name_map[idx_6] = "6"
-
-    nr = struct.unpack_from('<i', new_uexp, 41)[0]
-    print(f"  NumRows: {nr}")
-    v_off = 45
-    for r in range(nr):
-        ridx = struct.unpack_from('<i', new_uexp, v_off)[0]
-        rname = name_map.get(ridx, f"idx{ridx}")
-        v_off += 8
-        non_default = []
-        for p in range(13):
-            pidx = struct.unpack_from('<i', new_uexp, v_off)[0]
-            v_off += 8 + 8 + 4 + 4 + 1  # skip name + type + size + arr + guid
-            fval = struct.unpack_from('<f', new_uexp, v_off)[0]
-            v_off += 4
-            pname = name_map.get(pidx, f"idx{pidx}")
-            if fval != 1.0:
-                non_default.append(f"{pname}={fval:.2f}")
-        v_off += 8  # None
-
-        status = ', '.join(non_default) if non_default else "all 1.0"
-        print(f"  Row '{rname}': {status}")
-
-    remaining = len(new_uexp) - v_off
-    print(f"  Footer: {remaining} bytes")
+    parser = argparse.ArgumentParser(description="Gera a DataTable de escala por jogadores (linhas 1 a 6) em modified/.")
+    parser.add_argument("--teste", dest="test", action="store_true", help="tabela de teste: solo com 3x inimigos, 3x vida e 3x dano")
+    args = parser.parse_args()
+    uasset, uexp = build_table(*load_original(), test=args.test)
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    base = os.path.join(OUTPUT_DIR, TABLE_NAME)
+    with open(base + ".uasset", "wb") as out:
+        out.write(uasset)
+    with open(base + ".uexp", "wb") as out:
+        out.write(uexp)
+    print("DataTable gerada em %s (%d + %d bytes)" % (OUTPUT_DIR, len(uasset), len(uexp)))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
