@@ -1,22 +1,8 @@
---[[
-    EnemyScaling — Remnant: From the Ashes
-    Escala vida e dano dos inimigos proporcionalmente ao numero de jogadores.
-
-    O jogo escala nativamente ate 3 jogadores. Este mod adiciona scaling
-    extra para 4+ jogadores via UE4SS.
-
-    Requer: UE4SS v3.0.1+ (https://github.com/UE4SS-RE/RE-UE4SS)
-]]
-
 ------------------------------------------------------------
 -- CONFIGURACAO (edite aqui)
 ------------------------------------------------------------
 
--- Bonus POR JOGADOR acima de 3. Com 6 players:
---   HP:   1 + 3*0.35 = 2.05x
---   Dano: 1 + 3*0.15 = 1.45x
-local HEALTH_PER_EXTRA = 0.35
-local DAMAGE_PER_EXTRA = 0.15
+local HEALTH_PER_EXTRA = 0.25
 
 -- Numero de jogadores que o jogo ja escala nativamente
 local BASE_PLAYERS = 3
@@ -49,9 +35,6 @@ local scaledActors = {}
 
 -- Classe de inimigos descoberta (cache)
 local enemyClassName = nil
-
--- Cache dos pawns de jogadores (atualizado a cada scan, usado no hook de dano)
-local playerPawnCache = {}
 
 -- Nomes de classes para tentar (GunfireRuntime / Remnant / generico)
 local CHARACTER_CLASSES = {
@@ -94,10 +77,6 @@ local function HealthMultiplier()
     return 1.0 + ExtraPlayers() * HEALTH_PER_EXTRA
 end
 
-local function DamageMultiplier()
-    return 1.0 + ExtraPlayers() * DAMAGE_PER_EXTRA
-end
-
 -- Nome completo do objeto (detecta reuso de endereco por outro ator)
 local function SafeFullName(obj)
     local ok, name = pcall(function() return obj:GetFullName() end)
@@ -136,10 +115,7 @@ local function UpdatePlayerCount()
         local old = currentPlayers
         currentPlayers = count
         pendingScans = 0
-        Log(string.format(
-            "Jogadores: %d -> %d | HP x%.2f | Dano x%.2f",
-            old, count, HealthMultiplier(), DamageMultiplier()
-        ))
+        Log(string.format("Jogadores: %d -> %d | HP x%.2f", old, count, HealthMultiplier()))
         -- NAO limpa scaledActors: o loop re-escala os inimigos existentes
         -- de forma relativa ao multiplicador que ja foi aplicado neles.
     end
@@ -249,87 +225,21 @@ local function ApplyRatio(actor, ratio)
 end
 
 ------------------------------------------------------------
--- DAMAGE SCALING
-------------------------------------------------------------
-
--- Caminhos de funcoes de dano para tentar hookar
-local DAMAGE_HOOKS = {
-    "/Script/GunfireRuntime.DamageableComponent:TakeDamage",
-    "/Script/GunfireRuntime.CharacterGunfire:TakeDamage",
-    "/Script/Engine.Actor:ReceiveAnyDamage",
-}
-
-local damageHooked = false
-
-local function TryHookDamage()
-    if damageHooked then return end
-
-    for _, path in ipairs(DAMAGE_HOOKS) do
-        local ok, hookId = pcall(function()
-            return RegisterHook(path, function(Context, Damage, ...)
-                if not Context:IsValid() then return end
-                if DAMAGE_PER_EXTRA <= 0 then return end
-
-                local mult = DamageMultiplier()
-                if mult <= 1.0 then return end
-
-                -- So escala se o alvo eh um jogador (cache do ultimo scan,
-                -- evita FindAllOf a cada hit)
-                local targetAddr = Context:get():GetAddress()
-
-                -- Se Context eh o componente, pega o owner
-                local ok2, owner = pcall(function() return Context:get():GetOwner() end)
-                if ok2 and owner and owner:IsValid() then
-                    targetAddr = owner:GetAddress()
-                end
-
-                if playerPawnCache[targetAddr] then
-                    -- Multiplica o dano recebido pelo jogador
-                    if Damage and Damage.get then
-                        local currentDmg = Damage:get()
-                        if type(currentDmg) == "number" and currentDmg > 0 then
-                            Damage:set(currentDmg * mult)
-                        end
-                    end
-                end
-            end)
-        end)
-
-        if ok and hookId then
-            damageHooked = true
-            Log("Hook de dano registrado: " .. path)
-            return
-        end
-    end
-
-    Log("Nenhum hook de dano encontrado (apenas HP sera escalado)")
-end
-
-------------------------------------------------------------
 -- LOOP PRINCIPAL
 ------------------------------------------------------------
 
 Log("=== EnemyScaling carregado ===")
-Log(string.format(
-    "Config: +%.0f%% HP / +%.0f%% Dano por jogador acima de %d",
-    HEALTH_PER_EXTRA * 100, DAMAGE_PER_EXTRA * 100, BASE_PLAYERS
-))
-
--- Tenta hookar funcoes de dano uma vez na inicializacao
-TryHookDamage()
+Log(string.format("Config: +%.0f%% HP por jogador acima de %d", HEALTH_PER_EXTRA * 100, BASE_PLAYERS))
 
 local function Scan()
     UpdatePlayerCount()
 
     local playerPawns, playerControllers = GetPlayers()
-    playerPawnCache = playerPawns
 
     local mult = HealthMultiplier()
 
     -- Nada escalado e nada a escalar
     if mult <= 1.0 and next(scaledActors) == nil then return end
-
-    if mult > 1.0 then TryHookDamage() end
 
     local className = DiscoverEnemyClass()
     if not className then return end
@@ -370,9 +280,10 @@ local function Scan()
     end
 end
 
--- Scan periodico
 LoopAsync(SCAN_INTERVAL_MS, function()
-    local ok, err = pcall(Scan)
-    if not ok then Log("Erro no scan: " .. tostring(err)) end
-    return false -- continua o loop
+    ExecuteInGameThread(function()
+        local ok, err = pcall(Scan)
+        if not ok then Log("Erro no scan: " .. tostring(err)) end
+    end)
+    return false
 end)

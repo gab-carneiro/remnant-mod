@@ -1,0 +1,163 @@
+local Mock = {}
+
+local next_address = 0x10000
+
+local methods = {
+    IsValid = function(self) return rawget(self, "_valid") end,
+    GetAddress = function(self) return rawget(self, "_address") end,
+    GetFullName = function(self) return rawget(self, "_name") end,
+    ConsoleCommand = function(self, command)
+        local world = rawget(self, "_world")
+        world.console[#world.console + 1] = command
+    end,
+}
+
+local ObjectMeta = {}
+
+ObjectMeta.__index = function(self, key)
+    if methods[key] then return methods[key] end
+    local props = rawget(self, "_props")
+    local value = props[key]
+    if value == nil then
+        error("propriedade inexistente: " .. tostring(key))
+    end
+    return value
+end
+
+ObjectMeta.__newindex = function(self, key, value)
+    local props = rawget(self, "_props")
+    if props[key] == nil then
+        error("propriedade inexistente: " .. tostring(key))
+    end
+    props[key] = value
+end
+
+Mock.null = setmetatable({ _valid = false, _address = 0, _name = "None", _props = {}, _classes = {} }, ObjectMeta)
+
+local ArrayMeta = {}
+
+ArrayMeta.__index = function(self, key)
+    local items = rawget(self, "_items")
+    if key == "GetArrayNum" then
+        return function() return #items end
+    end
+    if type(key) == "number" then
+        local world = rawget(self, "_world")
+        world.array_index_reads = world.array_index_reads + 1
+        return items[key]
+    end
+    error("membro inexistente em TArray: " .. tostring(key))
+end
+
+ArrayMeta.__len = function(self)
+    return #rawget(self, "_items")
+end
+
+local World = {}
+World.__index = World
+
+function Mock.world()
+    return setmetatable({
+        objects = {}, loops = {}, game_thread = {}, hooks = {}, logs = {}, console = {}, array_index_reads = 0,
+    }, World)
+end
+
+function World:spawn(class_names, props)
+    next_address = next_address + 0x40
+    local obj = {
+        _valid = true,
+        _address = next_address,
+        _name = class_names[1] .. " /Game/Mock." .. class_names[1] .. "_" .. next_address,
+        _props = props or {},
+        _classes = {},
+        _world = self,
+    }
+    for _, class_name in ipairs(class_names) do
+        obj._classes[class_name] = true
+    end
+    setmetatable(obj, ObjectMeta)
+    self.objects[#self.objects + 1] = obj
+    return obj
+end
+
+function World:destroy(obj)
+    rawset(obj, "_valid", false)
+    for i, candidate in ipairs(self.objects) do
+        if candidate == obj then
+            table.remove(self.objects, i)
+            return
+        end
+    end
+end
+
+function World:array(items)
+    return setmetatable({ _items = items, _world = self }, ArrayMeta)
+end
+
+function World:find_all(class_name)
+    local found = {}
+    for _, obj in ipairs(self.objects) do
+        if rawget(obj, "_classes")[class_name] then
+            found[#found + 1] = obj
+        end
+    end
+    return found
+end
+
+function World:run(script_path)
+    local world = self
+    local env = setmetatable({}, { __index = _G })
+    env.FindAllOf = function(class_name)
+        local found = world:find_all(class_name)
+        if #found == 0 then return nil end
+        return found
+    end
+    env.FindFirstOf = function(class_name)
+        return world:find_all(class_name)[1]
+    end
+    env.LoopAsync = function(_, callback)
+        world.loops[#world.loops + 1] = callback
+    end
+    env.ExecuteInGameThread = function(callback)
+        world.game_thread[#world.game_thread + 1] = callback
+    end
+    env.RegisterHook = function(path)
+        world.hooks[#world.hooks + 1] = path
+        return 1, 1
+    end
+    env.print = function(message)
+        world.logs[#world.logs + 1] = message
+    end
+    local chunk = assert(loadfile(script_path, "t", env))
+    chunk()
+end
+
+function World:tick_async_only()
+    for _, callback in ipairs(self.loops) do
+        callback()
+    end
+end
+
+function World:drain_game_thread()
+    local pending = self.game_thread
+    self.game_thread = {}
+    for _, callback in ipairs(pending) do
+        callback()
+    end
+end
+
+function World:tick(times)
+    for _ = 1, times or 1 do
+        self:tick_async_only()
+        self:drain_game_thread()
+    end
+end
+
+function World:logged(pattern)
+    for _, line in ipairs(self.logs) do
+        if line:find(pattern) then return true end
+    end
+    return false
+end
+
+return Mock
