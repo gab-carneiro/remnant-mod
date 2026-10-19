@@ -38,6 +38,18 @@ class PakFormatTest(unittest.TestCase):
         for name in (build_pak.OUTPUT_NAME, build_pak.TEST_OUTPUT_NAME):
             self.assertGreater(ue422.pak_read_order(MODS_DIR + name), base, name)
 
+    def test_forgotten_test_pak_loses_to_the_release_pak(self):
+        order = ue422.pak_lookup_order([
+            BASE_GAME_PAK,
+            MODS_DIR + build_pak.TEST_OUTPUT_NAME,
+            MODS_DIR + build_pak.OUTPUT_NAME,
+        ])
+        self.assertEqual(order[0], MODS_DIR + build_pak.OUTPUT_NAME)
+
+    def test_test_pak_alone_overrides_the_base_game_pak(self):
+        order = ue422.pak_lookup_order([BASE_GAME_PAK, MODS_DIR + build_pak.TEST_OUTPUT_NAME])
+        self.assertEqual(order[0], MODS_DIR + build_pak.TEST_OUTPUT_NAME)
+
 
 class ReleasePakTest(unittest.TestCase):
     def test_committed_pak_is_the_current_build(self):

@@ -215,6 +215,12 @@ def pak_read_order(pak_path):
     return order
 
 
+def pak_lookup_order(pak_paths):
+    found = sorted(pak_paths, key=lambda path: path.lower(), reverse=True)
+    mounted = sorted(enumerate(found), key=lambda item: (-pak_read_order(item[1]), item[0]))
+    return [path for _, path in mounted]
+
+
 def read_package(uasset, uexp):
     r = Reader(uasset)
     pkg = {}

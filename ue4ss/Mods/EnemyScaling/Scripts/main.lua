@@ -21,7 +21,7 @@ local currentPlayers = 0
 local pendingPlayers = -1
 local pendingScans = 0
 local scaledActors = {}
-local currentLevel = nil
+local currentGameState = nil
 
 local function Log(msg)
     if LOG_ENABLED then
@@ -161,9 +161,9 @@ local function Scan()
     local gameState = Child(world, "GameState")
     if not gameState then return end
 
-    local level = SafeFullName(gameState) .. "@" .. tostring(gameState:GetAddress())
-    if level ~= currentLevel then
-        currentLevel = level
+    local gameStateId = SafeFullName(gameState) .. "@" .. tostring(gameState:GetAddress())
+    if gameStateId ~= currentGameState then
+        currentGameState = gameStateId
         scaledActors = {}
     end
 

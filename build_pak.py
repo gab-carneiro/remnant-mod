@@ -7,7 +7,7 @@ import rebuild_scaling
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_NAME = "6player_P.pak"
-TEST_OUTPUT_NAME = "6player_TESTE_P.pak"
+TEST_OUTPUT_NAME = "6player_0_TESTE_P.pak"
 MOUNT_POINT = "../../../"
 TABLE_PAK_PATH = "Remnant/Content/_Core/Stats/" + rebuild_scaling.TABLE_NAME
 

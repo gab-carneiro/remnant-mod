@@ -26,7 +26,7 @@ Mod que libera co-op de ate **6 jogadores** no **Remnant: From the Ashes**, com 
    Remnant\Binaries\Win64\Mods\EnemyScaling\...
    ```
 4. Baixe o [UE4SS v3.0.1](https://github.com/UE4SS-RE/RE-UE4SS/releases/tag/v3.0.1) (`UE4SS_v3.0.1.zip`, nao o "zDEV") e extraia em `Remnant\Binaries\Win64\`, a mesma pasta onde ficou a pasta `Mods` do passo 3
-5. **Atualizando de versao antiga?** Apague `Remnant\Content\Paks\~mods\6player.pak` (sem o `_P`). Ele nunca chegou a carregar no jogo
+5. **Atualizando de versao antiga?** Apague `Remnant\Content\Paks\~mods\6player.pak` (sem o `_P`). Ele nunca chegou a carregar no jogo. Quem instalou o UE4SS como cliente na v1.1 tambem extrai o zip novo por cima, ou apaga a pasta `Mods\EnemyScaling`
 
 ### Resultado final
 
@@ -49,17 +49,17 @@ Remnant\
 
 O PAK so funciona se o jogo carregar ele, e isso so da para confirmar jogando. Faca uma vez, solo:
 
-1. Baixe `6player_TESTE_P.pak` na mesma release
-2. Em `Remnant\Content\Paks\~mods\`, tire o `6player_P.pak` e coloque o `6player_TESTE_P.pak` no lugar
+1. Baixe `6player_0_TESTE_P.pak` na mesma release
+2. Em `Remnant\Content\Paks\~mods\`, tire o `6player_P.pak` e coloque o `6player_0_TESTE_P.pak` no lugar
 3. Jogue solo alguns minutos numa area com inimigos. Com o PAK de teste o solo fica com **3x mais inimigos**, que aguentam **3x mais tiros** e cujos golpes tiram **3x mais vida**
-4. Apague o `6player_TESTE_P.pak` e volte o `6player_P.pak`
+4. Apague o `6player_0_TESTE_P.pak` e volte o `6player_P.pak`. Se os dois ficarem juntos em `~mods`, vale o `6player_P.pak`
 
 | O que aconteceu | Significado |
 |---|---|
 | Mais inimigos, mais resistentes e batendo mais forte | Tudo certo |
 | Inimigos com a resistencia normal | O jogo nao usa a coluna de vida da tabela: ative o EnemyScaling (veja [Vida pelo Lua](#vida-pelo-lua-reserva)) |
 | Golpes com o dano normal | O jogo nao usa a coluna de dano da tabela. Abra uma issue |
-| Nada mudou | O PAK nao carregou. Abra uma issue |
+| Nada mudou | Confira se tirou o `6player_P.pak` (com os dois em `~mods`, o de teste nao vale). Se tirou, o PAK nao carregou: abra uma issue |
 
 ---
 
@@ -73,7 +73,7 @@ O PAK so funciona se o jogo carregar ele, e isso so da para confirmar jogando. F
 
 ### Console do UE4SS
 
-O console abre automaticamente junto com o jogo. Se nao aparecer, edite `UE4SS-settings.ini`:
+O UE4SS 3.0.1 vem com o console escondido. Para ele abrir junto com o jogo, edite `UE4SS-settings.ini`:
 ```ini
 GuiConsoleEnabled = 1
 GuiConsoleVisible = 1
@@ -110,7 +110,7 @@ Edite no topo de `rebuild_scaling.py`, rode `python build_pak.py` e troque o `6p
 
 ### Vida pelo Lua (reserva)
 
-O EnemyScaling so serve se o teste de 2 minutos mostrar que o jogo ignora a coluna de vida. Ele vem **desligado no proprio script**: no console aparece `[EnemyScaling] desligado...`. Para ligar, troque `local ENABLED = false` por `local ENABLED = true` no topo de `Mods\EnemyScaling\Scripts\main.lua` e reinicie o jogo. Nao ligue com a coluna de vida funcionando, senao a vida escala duas vezes.
+O EnemyScaling so serve se o teste de 2 minutos mostrar que o jogo ignora a coluna de vida. Ele vem **desligado no proprio script**: no console aparece `[EnemyScaling] desligado...`. Para ligar, troque `local ENABLED = false` por `local ENABLED = true` no topo de `Mods\EnemyScaling\Scripts\main.lua` e reinicie o jogo. Nao ligue com a coluna de vida funcionando, senao a vida escala duas vezes. Cada atualizacao do mod traz o `main.lua` desligado de novo.
 
 Ele da +25% de vida por jogador acima de 3, igual para todos os inimigos (`HEALTH_PER_EXTRA` no topo do `main.lua`). Quando alguem sai ou entra, os inimigos vivos se ajustam mantendo a % de vida. Para achar os inimigos ele percorre a lista de objetos do jogo a cada 5 s, o que pode causar uma travadinha leve no host.
 
@@ -194,13 +194,13 @@ remnant-mod/
 
 ```bash
 python build_pak.py            # 6player_P.pak
-python build_pak.py --teste    # 6player_TESTE_P.pak (solo com 3x inimigos, 3x vida e 3x dano)
+python build_pak.py --teste    # 6player_0_TESTE_P.pak (solo com 3x inimigos, 3x vida e 3x dano)
 python rebuild_scaling.py      # so a DataTable, em modified/, para inspecionar
 ```
 
 Requer Python 3, sem dependencias. O PAK e gravado sem compressao, entao sai identico em qualquer maquina.
 
-A release leva dois arquivos: `remnant-6players.zip` (o `6player_P.pak` em `Remnant/Content/Paks/~mods/` e a pasta `ue4ss/Mods` em `Remnant/Binaries/Win64/Mods/`) e o `6player_TESTE_P.pak`.
+A release leva dois arquivos: `remnant-6players.zip` (o `6player_P.pak` em `Remnant/Content/Paks/~mods/` e a pasta `ue4ss/Mods` em `Remnant/Binaries/Win64/Mods/`) e o `6player_0_TESTE_P.pak`.
 
 ### Testes
 
