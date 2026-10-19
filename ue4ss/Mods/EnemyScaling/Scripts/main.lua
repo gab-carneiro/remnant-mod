@@ -1,3 +1,4 @@
+local ENABLED = false
 local HEALTH_PER_EXTRA = 0.25
 local BASE_PLAYERS = 3
 local SCAN_INTERVAL_MS = 5000
@@ -20,6 +21,7 @@ local currentPlayers = 0
 local pendingPlayers = -1
 local pendingScans = 0
 local scaledActors = {}
+local currentLevel = nil
 
 local function Log(msg)
     if LOG_ENABLED then
@@ -159,6 +161,12 @@ local function Scan()
     local gameState = Child(world, "GameState")
     if not gameState then return end
 
+    local level = SafeFullName(gameState) .. "@" .. tostring(gameState:GetAddress())
+    if level ~= currentLevel then
+        currentLevel = level
+        scaledActors = {}
+    end
+
     local count, playerPawns, playerControllers = ReadPlayers(gameState)
     UpdatePlayerCount(count)
 
@@ -193,6 +201,11 @@ local function Scan()
     for address in pairs(scaledActors) do
         if not seen[address] then scaledActors[address] = nil end
     end
+end
+
+if not ENABLED then
+    Log("desligado: a vida ja escala pela tabela do PAK. Para ligar, ENABLED = true no topo deste main.lua")
+    return
 end
 
 Log("=== EnemyScaling carregado ===")

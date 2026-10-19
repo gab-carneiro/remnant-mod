@@ -104,7 +104,7 @@ function World:spawn(class_names, props, options)
     local obj = {
         _valid = true,
         _address = address,
-        _name = class_names[1] .. " /Game/Mock." .. class_names[1] .. "_" .. next_name,
+        _name = options.name or (class_names[1] .. " /Game/Mock." .. class_names[1] .. "_" .. next_name),
         _flags = options.flags or 0,
         _props = props or {},
         _classes = {},
@@ -148,7 +148,8 @@ function World:find_all(class_name)
     return found
 end
 
-function World:run(script_path)
+function World:run(script_path, options)
+    options = options or {}
     local world = self
     local env = setmetatable({}, { __index = _G })
     env.FindAllOf = function(class_name)
@@ -175,7 +176,15 @@ function World:run(script_path)
     env.print = function(message)
         world.logs[#world.logs + 1] = message
     end
-    local chunk = assert(loadfile(script_path, "t", env))
+    local file = assert(io.open(script_path, "r"))
+    local source = file:read("a")
+    file:close()
+    for old, new in pairs(options.replace or {}) do
+        local start = source:find(old, 1, true)
+        assert(start, "trecho nao encontrado no script: " .. old)
+        source = source:sub(1, start - 1) .. new .. source:sub(start + #old)
+    end
+    local chunk = assert(load(source, "@" .. script_path, "t", env))
     chunk()
 end
 

@@ -110,7 +110,7 @@ Edite no topo de `rebuild_scaling.py`, rode `python build_pak.py` e troque o `6p
 
 ### Vida pelo Lua (reserva)
 
-O EnemyScaling so serve se o teste de 2 minutos mostrar que o jogo ignora a coluna de vida. Ele vem **desligado**; para ligar, crie um arquivo vazio `enabled.txt` em `Mods\EnemyScaling\`. Nao ligue com a coluna de vida funcionando, senao a vida escala duas vezes.
+O EnemyScaling so serve se o teste de 2 minutos mostrar que o jogo ignora a coluna de vida. Ele vem **desligado no proprio script**: no console aparece `[EnemyScaling] desligado...`. Para ligar, troque `local ENABLED = false` por `local ENABLED = true` no topo de `Mods\EnemyScaling\Scripts\main.lua` e reinicie o jogo. Nao ligue com a coluna de vida funcionando, senao a vida escala duas vezes.
 
 Ele da +25% de vida por jogador acima de 3, igual para todos os inimigos (`HEALTH_PER_EXTRA` no topo do `main.lua`). Quando alguem sai ou entra, os inimigos vivos se ajustam mantendo a % de vida. Para achar os inimigos ele percorre a lista de objetos do jogo a cada 5 s, o que pode causar uma travadinha leve no host.
 
@@ -135,7 +135,7 @@ O NetOptimize (so no host) sobe esse limite para **100 KB/s por cliente**, o pad
 |---|---|
 | PAK | Delete `6player_P.pak` da pasta `~mods` |
 | NetOptimize | Delete `Mods/NetOptimize/` ou remova `enabled.txt` |
-| EnemyScaling | Delete `Mods/EnemyScaling/` (ou so o `enabled.txt`, se voce tiver ligado) |
+| EnemyScaling | Delete `Mods/EnemyScaling/` ou remova `enabled.txt` |
 | UE4SS | Delete `dwmapi.dll`, `UE4SS.dll`, `UE4SS-settings.ini` e `Mods/` |
 
 ---
@@ -158,7 +158,7 @@ O NetOptimize (so no host) sobe esse limite para **100 KB/s por cliente**, o pad
 - **PAK:** desde a conversao para o formato v8 ele nunca tinha carregado. O rodape nao tinha o GUID de criptografia, e o Unreal 4.22 lia lixo no lugar, achava que o PAK era criptografado e adiava a montagem para sempre. Agora monta, e se chama `6player_P.pak` porque no Unreal 4.22 so um PAK terminado em `_P` tem prioridade sobre o PAK do proprio jogo
 - **PAK:** agora so leva a DataTable de escala. O `DefaultGame.ini` saiu: ele substituia o arquivo inteiro do jogo por uma copia antiga, e as secoes de rede estavam no arquivo errado (o jogo le essas configs do `Engine.ini`, entao nunca valeram)
 - **DataTable:** os nomes das linhas "5" e "6" estavam com hash 0, e com isso o jogo nao encontrava essas linhas. Dois offsets do cabecalho tinham ficado 20 bytes atras, o que faria o jogo ler lixo como dependencia ao carregar a tabela, e o `BulkDataStartOffset` nao acompanhava as linhas novas. Tudo corrigido
-- **Vida e dano** agora escalam pela tabela nativa do jogo, por tipo de inimigo, com o chefe escalando mais. O hook de dano antigo nunca rodava (`Context:IsValid()` sempre saia da funcao), e a vida pelo Lua nao distinguia chefe de inimigo comum. O EnemyScaling virou reserva, desligado
+- **Vida e dano** agora escalam pela tabela nativa do jogo, por tipo de inimigo, com o chefe escalando mais. O hook de dano antigo nunca rodava (`Context:IsValid()` sempre saia da funcao), e a vida pelo Lua nao distinguia chefe de inimigo comum. O EnemyScaling virou reserva e vem desligado no proprio script (`ENABLED = false`), entao o `enabled.txt` que sobra de quem atualiza da v1.1 nao liga ele
 - **NetOptimize reescrito:** a banda de 100 KB/s por cliente e aplicada onde o servidor realmente le (o fix da v1.1 gravava um campo que o servidor ignora). Sairam smoothing, prioridade de rede e as 12 CVars, 7 das quais nem existem no Unreal 4.22
 - **NetOptimize** roda na game thread e chega na sala, na rede e nas conexoes a partir do proprio motor do jogo, sem varrer a lista de objetos e sem guardar referencia de um mapa para o outro
 - **Clientes** nao precisam mais instalar nada

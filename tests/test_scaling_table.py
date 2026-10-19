@@ -19,7 +19,7 @@ BOSS_HEALTH = [1.0, 1.0, 1.0, 1.35, 1.70, 2.05]
 DAMAGE_SCALARS = ["EnemyDamageScalar", "EliteDamageScalar", "BruteDamageScalar", "BossDamageScalar"]
 ENEMY_HEALTH_SCALARS = ["EnemyHealthScalar", "EliteHealthScalar", "BruteHealthScalar"]
 UNTOUCHED_SCALARS = ["CurrencyScalar", "ExperienceScalar", "FriendlyFireDamageScalar"]
-ENEMY_SCALING_ENABLED_FILE = os.path.join(ROOT, "ue4ss", "Mods", "EnemyScaling", "enabled.txt")
+
 UASSET_TAG = 0x9E2A83C1
 
 
@@ -101,9 +101,6 @@ class RowsTest(unittest.TestCase):
             for scalar in ENEMY_HEALTH_SCALARS:
                 self.assertAlmostEqual(self.rows[name][scalar], health, places=5, msg=name + " " + scalar)
             self.assertAlmostEqual(self.rows[name]["BossHealthScalar"], boss, places=5, msg=name + " BossHealthScalar")
-
-    def test_lua_health_scaling_ships_disabled_so_health_is_not_scaled_twice(self):
-        self.assertFalse(os.path.exists(ENEMY_SCALING_ENABLED_FILE))
 
     def test_rewards_and_friendly_fire_stay_vanilla(self):
         for name in ROW_NAMES:
