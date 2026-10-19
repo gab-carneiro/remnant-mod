@@ -11,6 +11,8 @@ Mod que libera co-op de ate **6 jogadores** no **Remnant: From the Ashes**, com 
 | EnemyScaling | Vem desligado; so se o teste mandar | Nao precisa |
 
 > **Resumo:** so o host instala. Quem entra na sala joga com o jogo original.
+>
+> **Cliente que instalou algo na v1.1?** Nao precisa de nada agora. Para voltar ao jogo original, apague `Mods\NetOptimize`, `Mods\EnemyScaling` e o `~mods\6player.pak`, ou desinstale o UE4SS (veja [Desinstalacao](#desinstalacao)).
 
 ---
 
@@ -26,7 +28,7 @@ Mod que libera co-op de ate **6 jogadores** no **Remnant: From the Ashes**, com 
    Remnant\Binaries\Win64\Mods\EnemyScaling\...
    ```
 4. Baixe o [UE4SS v3.0.1](https://github.com/UE4SS-RE/RE-UE4SS/releases/tag/v3.0.1) (`UE4SS_v3.0.1.zip`, nao o "zDEV") e extraia em `Remnant\Binaries\Win64\`, a mesma pasta onde ficou a pasta `Mods` do passo 3
-5. **Atualizando de versao antiga?** Apague `Remnant\Content\Paks\~mods\6player.pak` (sem o `_P`). Ele nunca chegou a carregar no jogo. Quem instalou o UE4SS como cliente na v1.1 tambem extrai o zip novo por cima, ou apaga a pasta `Mods\EnemyScaling`
+5. **Atualizando de versao antiga?** Apague `Remnant\Content\Paks\~mods\6player.pak` (sem o `_P`). Ele nunca chegou a carregar no jogo
 
 ### Resultado final
 
@@ -133,7 +135,7 @@ O NetOptimize (so no host) sobe esse limite para **100 KB/s por cliente**, o pad
 
 | Componente | Como remover |
 |---|---|
-| PAK | Delete `6player_P.pak` da pasta `~mods` |
+| PAK | Delete `6player_P.pak` da pasta `~mods` (e o `6player_0_TESTE_P.pak`, se sobrou do teste) |
 | NetOptimize | Delete `Mods/NetOptimize/` ou remova `enabled.txt` |
 | EnemyScaling | Delete `Mods/EnemyScaling/` ou remova `enabled.txt` |
 | UE4SS | Delete `dwmapi.dll`, `UE4SS.dll`, `UE4SS-settings.ini` e `Mods/` |
